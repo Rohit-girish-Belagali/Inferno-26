@@ -7,6 +7,7 @@
 #include "core/sparse.hpp"
 #include "la/basis_factorization.hpp"
 #include "la/markowitz_lu.hpp"
+#include "la/scaling.hpp"
 
 namespace inferno::simplex {
 
@@ -326,10 +327,11 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
   return false;
 }
 
-}  // namespace
-
-core::Solution SolveRevised(const core::LpProblem& problem, int max_iterations,
-                             const core::TolerancePolicy& tol) {
+// Solves `problem` as given, with no scaling applied — SolveRevised()
+// below is the public entry point and applies geometric-mean scaling
+// around this.
+core::Solution SolveRevisedCore(const core::LpProblem& problem, int max_iterations,
+                                 const core::TolerancePolicy& tol) {
   core::Solution solution;
 
   Workspace ws;
@@ -468,6 +470,68 @@ core::Solution SolveRevised(const core::LpProblem& problem, int max_iterations,
   for (int j = 0; j < problem.num_cols; ++j) obj += problem.obj[j] * solution.x[j];
   solution.objective_value = obj;
   solution.iterations = iters_used;
+
+  return solution;
+}
+
+}  // namespace
+
+core::Solution SolveRevised(const core::LpProblem& problem, int max_iterations,
+                             const core::TolerancePolicy& tol) {
+  // Geometric-mean + equilibration scaling (la/scaling.hpp), applied once
+  // here rather than left in the basis matrices FactorizeMarkowitz sees.
+  // An unscaled problem with widely varying coefficient magnitudes can
+  // produce FTRAN/BTRAN results that are enormous purely from numerical
+  // amplification (not genuine problem structure) — this was the direct
+  // cause of scsd1's false "unbounded" report (a basic variable's value
+  // was off by ~1e9) before that was caught defensively; scaling attacks
+  // the actual root cause instead of only guarding against its symptom.
+  la::ScaleFactors scale = la::ComputeGeometricScaling(problem.a);
+
+  core::LpProblem scaled = problem;
+  scaled.a = la::ApplyScaling(problem.a, scale);
+  for (int i = 0; i < problem.num_rows; ++i) {
+    scaled.row_lo[i] = std::isfinite(problem.row_lo[i]) ? problem.row_lo[i] * scale.row_scale[i]
+                                                          : problem.row_lo[i];
+    scaled.row_hi[i] = std::isfinite(problem.row_hi[i]) ? problem.row_hi[i] * scale.row_scale[i]
+                                                          : problem.row_hi[i];
+  }
+  for (int j = 0; j < problem.num_cols; ++j) {
+    scaled.col_lo[j] = std::isfinite(problem.col_lo[j]) ? problem.col_lo[j] / scale.col_scale[j]
+                                                          : problem.col_lo[j];
+    scaled.col_hi[j] = std::isfinite(problem.col_hi[j]) ? problem.col_hi[j] / scale.col_scale[j]
+                                                          : problem.col_hi[j];
+    scaled.obj[j] = problem.obj[j] * scale.col_scale[j];
+  }
+
+  core::Solution scaled_solution = SolveRevisedCore(scaled, max_iterations, tol);
+
+  core::Solution solution;
+  solution.status = scaled_solution.status;
+  solution.iterations = scaled_solution.iterations;
+  solution.basis = scaled_solution.basis;  // variable indices, unaffected by scaling
+
+  if (scaled_solution.status != core::SolveStatus::kOptimal) return solution;
+
+  solution.x.assign(problem.num_cols, 0.0);
+  for (int j = 0; j < problem.num_cols; ++j) solution.x[j] = scaled_solution.x[j] * scale.col_scale[j];
+
+  solution.row_activity.assign(problem.num_rows, 0.0);
+  for (int i = 0; i < problem.num_rows; ++i) {
+    solution.row_activity[i] = scaled_solution.row_activity[i] / scale.row_scale[i];
+  }
+
+  solution.y.assign(problem.num_rows, 0.0);
+  for (int i = 0; i < problem.num_rows; ++i) solution.y[i] = scaled_solution.y[i] * scale.row_scale[i];
+
+  solution.reduced_cost.assign(problem.num_cols, 0.0);
+  for (int j = 0; j < problem.num_cols; ++j) {
+    solution.reduced_cost[j] = scaled_solution.reduced_cost[j] / scale.col_scale[j];
+  }
+
+  double obj = problem.obj_offset;
+  for (int j = 0; j < problem.num_cols; ++j) obj += problem.obj[j] * solution.x[j];
+  solution.objective_value = obj;
 
   return solution;
 }
