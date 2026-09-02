@@ -50,6 +50,31 @@ struct Workspace {
   la::BasisFactorization bf;
 };
 
+// Recomputes every basic variable's value from scratch via one FTRAN call,
+// replacing whatever the incremental per-pivot updates had accumulated.
+// The incremental update (ws.value[basis[slot]] += ... each pivot) is
+// cheap but its floating-point error compounds additively over hundreds
+// of pivots; dense_simplex.cpp avoids this entirely by recomputing xB from
+// scratch every single iteration (part of why it's slow). This is the
+// cheap middle ground: ground xB back to an accurate value whenever a
+// refactorization already pays for an FTRAN-scale operation anyway,
+// rather than trusting incremental drift indefinitely.
+void RecomputeBasicValues(Workspace& ws, const core::LpProblem& problem) {
+  std::vector<double> mx(ws.m, 0.0);
+  for (int j = 0; j < ws.n; ++j) {
+    if (ws.basis_slot_of[j] != -1) continue;
+    double xj = ws.value[j];
+    if (xj == 0.0) continue;
+    for (const auto& [row, val] : ColumnOf(problem, j)) mx[row] += val * xj;
+  }
+  std::vector<std::pair<int, double>> rhs_sparse;
+  for (int row = 0; row < ws.m; ++row) {
+    if (mx[row] != 0.0) rhs_sparse.emplace_back(row, -mx[row]);
+  }
+  std::vector<double> xb = ws.bf.Ftran(rhs_sparse);
+  for (int slot = 0; slot < ws.m; ++slot) ws.value[ws.basis[slot]] = xb[slot];
+}
+
 bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<double>& cost,
               bool is_phase1, int max_iterations, const core::TolerancePolicy& tol,
               bool& numerical_error, bool& hit_iteration_limit, bool& unbounded,
@@ -242,6 +267,7 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
           numerical_error = true;
           return false;
         }
+        RecomputeBasicValues(ws, problem);
       }
     }
   }
@@ -325,6 +351,11 @@ core::Solution SolveRevised(const core::LpProblem& problem, int max_iterations,
   if (hit_limit) { solution.status = core::SolveStatus::kIterationLimit; return solution; }
   if (!phase1_ok) { solution.status = core::SolveStatus::kNumericalError; return solution; }
 
+  // Ground xB before trusting it for the feasibility check and carrying it
+  // into phase 2 — phase 1 may have ended between refactorizations, so
+  // whatever incremental drift built up since the last one is still live.
+  RecomputeBasicValues(ws, problem);
+
   double total_infeas = 0.0;
   for (int j = 0; j < ws.n; ++j) {
     double v = ws.value[j];
@@ -346,6 +377,11 @@ core::Solution SolveRevised(const core::LpProblem& problem, int max_iterations,
   if (p2_unbounded) { solution.status = core::SolveStatus::kUnbounded; return solution; }
   if (p2_numerical_error) { solution.status = core::SolveStatus::kNumericalError; return solution; }
   if (p2_hit_limit) { solution.status = core::SolveStatus::kIterationLimit; return solution; }
+
+  // Final grounding: whatever solution we report should reflect the exact
+  // current basis, not accumulated per-pivot drift since the last
+  // refactorization.
+  RecomputeBasicValues(ws, problem);
 
   std::vector<double> cost_b(ws.m);
   for (int slot = 0; slot < ws.m; ++slot) cost_b[slot] = ws.cost_phase2[ws.basis[slot]];
