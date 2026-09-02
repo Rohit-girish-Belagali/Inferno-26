@@ -177,7 +177,24 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
       }
     }
 
-    if (entering == -1) return true;  // optimal for this phase
+    if (entering == -1) {
+      // Phase 1 legitimately ends here even while infeasible (that's how
+      // the caller detects genuine infeasibility — checked separately,
+      // above). Phase 2 starts from a state phase 1 already verified
+      // feasible, so if phase 2 reaches "no improving direction" while
+      // actually infeasible, feasibility was silently lost along the way
+      // (an ill-conditioned pivot sequence, same class of risk the
+      // unbounded-conclusion check above guards) — that is not a
+      // trustworthy "optimal", regardless of what the reduced costs say.
+      if (!is_phase1) {
+        RecomputeBasicValues(ws, problem);  // rule out mere incremental drift before judging
+        if (MaxBoundViolation(ws) > tol.checker_residual) {
+          numerical_error = true;
+          return false;
+        }
+      }
+      return true;  // optimal for this phase
+    }
 
     std::vector<std::pair<int, double>> entering_col = ColumnOf(problem, entering);
     std::vector<double> alpha = ws.bf.Ftran(entering_col);
