@@ -13,6 +13,7 @@ code from any existing solver is not — not once, not anywhere.
 | `la/markowitz_lu.*` | Markowitz-count pivot selection with threshold partial pivoting | Markowitz, "The elimination form of the inverse and its application to linear programming," *Management Science* 3(3), 1957; threshold pivoting and elimination bookkeeping per Suhl & Suhl 1990 | Permanent, MVP pivot search (see file header) |
 | `la/lu_solve.*` | Gilbert-Peierls sparse triangular solve (DFS reachability) | Gilbert & Peierls, "Sparse partial pivoting in time proportional to arithmetic operations," *SIAM J. Sci. Stat. Comput.* 9(5), 1988 | Permanent |
 | `la/basis_factorization.*` | Product-form-of-the-inverse (PFI) eta update, **not** Forrest-Tomlin | Classical technique — see e.g. Maros, *Computational Techniques of the Simplex Method*, ch. 3. **This is a deliberate, documented substitution**: BUILD_PLAN_V2.md's Phase 1.2 checklist names Forrest & Tomlin 1972's LU-form bump/Hessenberg update specifically. That algorithm's exact permutation-and-elimination procedure was judged too easy to get subtly wrong from memory without a reference to check against, so the simpler, fully-rederived PFI eta update was implemented instead, paired with a refactorization policy to bound the eta-chain growth PFI alone doesn't guarantee against the way true Forrest-Tomlin does. See the file header comment. | Interim — upgrading to true Forrest-Tomlin is tracked, not done |
+| `simplex/revised_simplex.*` | Bounded-variable primal revised simplex; Dantzig's rule pricing with a Bland's-rule fallback after sustained degenerate pivots; a two-pass ratio test (minimum step length, then largest-\|rate\| among ties) | Bazaraa, Jarvis & Sherali, *Linear Programming and Network Flows*, ch. 7 (revised simplex, bounded variables); Dantzig, *Linear Programming and Extensions*, 1963 (largest-coefficient pricing); Bland 1977 (anti-cycling fallback, same citation as the dense simplex's); the two-pass ratio-test *structure* (not the full bound-relaxation machinery) follows the same motivation as Harris 1973's two-pass test — see BUILD_PLAN_V2's core reading list | Permanent — this is the real solve path, not throwaway. Pricing is Dantzig only (no Devex/steepest-edge yet); ratio test is a lighter two-pass, not full Harris (no bound relaxation); no dual simplex, cost perturbation, or crash basis yet — see file header |
 
 ## Third-party tools (not solver code)
 
@@ -24,8 +25,7 @@ and is a data-format utility, not a solver dependency. See
 
 ## Pending
 
-Every entry above Phase 2 onward (revised simplex, Harris ratio test,
-Devex/steepest-edge pricing, presolve reductions, PDLP, branch-and-bound,
-cuts, ADMM for QP, true Forrest-Tomlin, ...) gets its citation added here
-when that module is written, per the core reading list in
-`BUILD_PLAN_V2.md`.
+Full Harris two-pass ratio test (bound relaxation), Devex/steepest-edge
+pricing, dual simplex, presolve reductions, PDLP, branch-and-bound, cuts,
+ADMM for QP, true Forrest-Tomlin — each gets its citation added here when
+that module is written, per the core reading list in `BUILD_PLAN_V2.md`.
