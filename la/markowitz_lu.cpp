@@ -95,8 +95,17 @@ bool FactorizeMarkowitz(const core::CscMatrix& b, const MarkowitzOptions& opts,
         auto& col_cp = active_col[cp];
         auto it = col_cp.find(i);
         double existing = (it != col_cp.end()) ? it->second : 0.0;
-        double updated = existing - mult * val_rcp;
-        if (std::abs(updated) < 1e-13) {
+        double subtrahend = mult * val_rcp;
+        double updated = existing - subtrahend;
+        // Drop only genuine cancellation-to-zero, relative to the operands
+        // that produced it — never an absolute threshold. On an unscaled
+        // matrix an absolute cutoff (this used to be a flat 1e-13) can
+        // discard a value that's small but real, and after enough
+        // elimination steps that silently turns a column structurally
+        // empty: FactorizeMarkowitz then reports the matrix singular when
+        // it isn't. Relative-to-operands only catches true cancellation.
+        double scale = std::max({std::abs(existing), std::abs(subtrahend), 1.0});
+        if (std::abs(updated) < 1e-14 * scale) {
           if (it != col_cp.end()) col_cp.erase(it);
           active_row[i].erase(cp);
         } else {

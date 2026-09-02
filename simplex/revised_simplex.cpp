@@ -145,9 +145,24 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
       self_limit = ws.hi[entering] - ws.lo[entering];
     }
 
-    double best_t = self_limit;
-    int leaving_slot = -1;
-    bool leaving_to_upper = false;
+    // Two-pass ratio test: pass 1 finds the minimum step length; pass 2,
+    // among every candidate tied with that minimum (within a small
+    // tolerance), picks the numerically most stable one — largest |rate| —
+    // rather than whichever was found first. A naive single-pass test can
+    // pick an arbitrarily tiny pivot element on a near-tie; each such
+    // choice individually clears the tol.pivot cutoff but repeatedly
+    // picking the worst of several tied options measurably degrades the
+    // basis over many pivots, up to and including landing on a genuinely
+    // singular basis (this is the specific bug that motivated adding this
+    // — see git history). Lighter than a full Harris two-pass test (no
+    // bound relaxation), but fixes that failure mode.
+    struct RatioCandidate {
+      int slot;
+      double t_limit;
+      double rate_abs;
+      bool to_upper;
+    };
+    std::vector<RatioCandidate> candidates;
 
     for (int slot = 0; slot < ws.m; ++slot) {
       double rate = -dir * alpha[slot];
@@ -173,19 +188,35 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
       } else {
         if (rate < -tol.pivot) { t_limit = (hi - v) / rate; candidate_to_upper = true; }
       }
-
+      if (!std::isfinite(t_limit)) continue;
       if (t_limit < -tol.feasibility) t_limit = 0.0;
-      if (t_limit < best_t) {
-        best_t = t_limit;
-        leaving_slot = slot;
-        leaving_to_upper = candidate_to_upper;
-      }
+      candidates.push_back({slot, t_limit, std::abs(rate), candidate_to_upper});
     }
+
+    double best_t = self_limit;
+    for (const auto& c : candidates) best_t = std::min(best_t, c.t_limit);
 
     if (!std::isfinite(best_t)) {
       unbounded = true;
       return false;
     }
+
+    double tie_band = std::max(tol.feasibility, best_t * 1e-9);
+    int leaving_slot = -1;
+    bool leaving_to_upper = false;
+    // A bound flip never touches the basis (perfectly stable), so it wins
+    // any tie against an actual pivot — give it an unbeatable score.
+    double chosen_stability = (std::isfinite(self_limit) && self_limit <= best_t + tie_band)
+                                   ? kInfinity
+                                   : -1.0;
+    for (const auto& c : candidates) {
+      if (c.t_limit <= best_t + tie_band && c.rate_abs > chosen_stability) {
+        chosen_stability = c.rate_abs;
+        leaving_slot = c.slot;
+        leaving_to_upper = c.to_upper;
+      }
+    }
+
     double t = std::max(0.0, best_t);
     if (t < tol.feasibility) ++degenerate_streak; else degenerate_streak = 0;
 

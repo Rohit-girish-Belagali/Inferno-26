@@ -9,6 +9,7 @@ honestly rather than guessed, see that file's header. Until it is
 populated, "PASS" here means: solver returned OPTIMAL and the independent
 checker accepted the solution, nothing more.
 """
+import argparse
 import csv
 import subprocess
 import sys
@@ -35,11 +36,11 @@ def load_optima():
     return optima
 
 
-def run_one(mps_path: Path):
+def run_one(mps_path: Path, solver_name: str):
     start = time.time()
     try:
         proc = subprocess.run(
-            [str(SOLVER), str(mps_path)],
+            [str(SOLVER), str(mps_path), "--solver", solver_name],
             capture_output=True, text=True, timeout=PER_INSTANCE_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:
@@ -65,6 +66,12 @@ def run_one(mps_path: Path):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--solver", choices=["revised", "dense"], default="revised",
+                         help="which solve path to benchmark (default: revised, the real "
+                              "Phase 2.1 sparse-LU simplex; dense is the Phase 1.1 throwaway)")
+    args = parser.parse_args()
+
     if not SOLVER.exists():
         print(f"solver binary not found at {SOLVER} — build it first "
               f"(cmake --build build, or see README.md)", file=sys.stderr)
@@ -80,7 +87,7 @@ def main():
     verified = 0
     for mps_path in instances:
         name = mps_path.stem
-        result = run_one(mps_path)
+        result = run_one(mps_path, args.solver)
 
         # Standing rule #2: the checker runs on every solve and its verdict
         # is what counts, not the solver's own claimed status. An OPTIMAL

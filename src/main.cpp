@@ -7,11 +7,15 @@
 #include "io/mps_reader.hpp"
 #include "io/solution_writer.hpp"
 #include "simplex/dense_simplex.hpp"
+#include "simplex/revised_simplex.hpp"
 
 namespace {
 
 void PrintUsage(const char* argv0) {
-  std::cerr << "usage: " << argv0 << " <problem.mps> [--solution out.sol]\n";
+  std::cerr << "usage: " << argv0
+            << " <problem.mps> [--solution out.sol] [--solver revised|dense]\n"
+               "  --solver revised   (default) sparse LU + Gilbert-Peierls FTRAN/BTRAN + PFI update\n"
+               "  --solver dense     Phase 1.1 throwaway dense tableau, kept for comparison\n";
 }
 
 }  // namespace
@@ -24,11 +28,18 @@ int main(int argc, char** argv) {
 
   std::string mps_path = argv[1];
   std::string solution_path;
+  std::string solver_name = "revised";
   for (int i = 2; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--solution" && i + 1 < argc) {
       solution_path = argv[++i];
+    } else if (arg == "--solver" && i + 1 < argc) {
+      solver_name = argv[++i];
     }
+  }
+  if (solver_name != "revised" && solver_name != "dense") {
+    PrintUsage(argv[0]);
+    return 2;
   }
 
   inferno::core::LpProblem problem;
@@ -40,11 +51,14 @@ int main(int argc, char** argv) {
   }
 
   auto start = std::chrono::steady_clock::now();
-  inferno::core::Solution solution = inferno::simplex::SolveDense(problem);
+  inferno::core::Solution solution = solver_name == "dense"
+                                          ? inferno::simplex::SolveDense(problem)
+                                          : inferno::simplex::SolveRevised(problem);
   auto end = std::chrono::steady_clock::now();
   double elapsed_s = std::chrono::duration<double>(end - start).count();
 
-  std::cout << problem.name << " status=" << inferno::io::StatusToString(solution.status)
+  std::cout << problem.name << " solver=" << solver_name
+            << " status=" << inferno::io::StatusToString(solution.status)
             << " objective=" << solution.objective_value << " iterations=" << solution.iterations
             << " time=" << elapsed_s << "s\n";
 
