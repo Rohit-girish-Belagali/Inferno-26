@@ -8,17 +8,21 @@
 #include "io/solution_writer.hpp"
 #include "presolve/presolve.hpp"
 #include "simplex/dense_simplex.hpp"
+#include "simplex/dual_simplex.hpp"
 #include "simplex/revised_simplex.hpp"
 
 namespace {
 
 void PrintUsage(const char* argv0) {
   std::cerr << "usage: " << argv0
-            << " <problem.mps> [--solution out.sol] [--solver revised|dense] [--presolve]\n"
+            << " <problem.mps> [--solution out.sol] [--solver revised|dense|dual] [--presolve]\n"
                "  --solver revised   (default) sparse LU + Gilbert-Peierls FTRAN/BTRAN + PFI update\n"
                "  --solver dense     Phase 1.1 throwaway dense tableau, kept for comparison\n"
+               "  --solver dual      bounded-variable dual simplex; only when a trivial "
+               "dual-feasible start exists (see simplex/dual_simplex.hpp) — reports "
+               "NUMERICAL_ERROR otherwise rather than a general dual phase 1\n"
                "  --presolve         fixed-variable + empty-column removal before solving "
-               "(opt-in; --solver dense ignores it, only revised uses it)\n";
+               "(opt-in; only --solver revised uses it)\n";
 }
 
 }  // namespace
@@ -43,7 +47,7 @@ int main(int argc, char** argv) {
       use_presolve = true;
     }
   }
-  if (solver_name != "revised" && solver_name != "dense") {
+  if (solver_name != "revised" && solver_name != "dense" && solver_name != "dual") {
     PrintUsage(argv[0]);
     return 2;
   }
@@ -67,9 +71,12 @@ int main(int argc, char** argv) {
       inferno::core::Solution reduced_solution = inferno::simplex::SolveRevised(pre.reduced);
       solution = inferno::presolve::Postsolve(problem, pre, reduced_solution);
     }
+  } else if (solver_name == "dense") {
+    solution = inferno::simplex::SolveDense(problem);
+  } else if (solver_name == "dual") {
+    solution = inferno::simplex::SolveDual(problem);
   } else {
-    solution = solver_name == "dense" ? inferno::simplex::SolveDense(problem)
-                                       : inferno::simplex::SolveRevised(problem);
+    solution = inferno::simplex::SolveRevised(problem);
   }
 
   auto end = std::chrono::steady_clock::now();
