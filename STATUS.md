@@ -11,17 +11,17 @@
 - One deliberate substitution: PFI eta update instead of true Forrest-Tomlin (documented, not hidden).
 - Day-10 gate metrics all met (factors correctly, updates within 1e-8, ≥20x faster than refactoring).
 
-### Phase 2.1 — Revised Simplex (days 11–25): 🟡 Partial (Short of Gate, moving)
-- Real revised simplex built — Devex pricing, scaling, two-pass ratio test, and (added this session) a greedy weighted-matching crash basis.
-- 76/93 Netlib instances verified with just the crash basis added (up from 74/93), zero false "optimal" claims. **79/93 combined with the Phase 2.2 presolve additions below** — best score so far, still zero checker-rejected claims.
-- The plan's own Checkpoint 2.1 (day 25) explicitly wants 98/98 at 1e-6 — still a real gap, narrower than before.
-- Missing: steepest-edge pricing, full Harris bound-relaxation, cost perturbation (a safer perturbed-tie-breaking variant was implemented instead of perturbing the objective itself — see NOTICE_ALGORITHMS.md), bound-flipping dual ratio test.
+### Phase 2.1 — Revised Simplex (days 11–25): 🟡 Partial (Short of Gate, much closer)
+- Real revised simplex built — Devex pricing (with a safe deterministic tie-breaking perturbation, added this session), scaling, two-pass ratio test, and a greedy weighted-matching crash basis (also added this session).
+- **80/93 Netlib instances verified with --presolve, zero checker-rejected claims** — the session's best confirmed number, up from a 77/93 starting baseline. Only 4 non-converging instances left (`pilot87`/`scsd1`/`scsd8` numerical error, `tuff` iteration limit), down from 18 at session start.
+- The plan's own Checkpoint 2.1 (day 25) explicitly wants 98/98 at 1e-6 — still a real gap, meaningfully narrower than before.
+- Missing: steepest-edge pricing, full Harris bound-relaxation, bound-flipping dual ratio test. Cost perturbation is done, but deliberately not the textbook form — see NOTICE_ALGORITHMS.md for why perturbing the objective itself was judged too risky to certify correct.
 - Built ahead of schedule: dual simplex (partial — only instances with a trivial dual-feasible start; a general dual phase 1 isn't implemented) and a sequential solve-manager fallback.
 
 ### Phase 2.2 — Presolve (days 26–32): 🟡 Partial, wider than before
 - 5 of ~8 reductions now: fixed-variable, empty-column (original two) plus redundant-row, singleton-row, and free-column-singleton removal (added this session, each with real postsolve dual/primal recovery, not just bound narrowing).
-- Missing: forcing rows, dominated columns/dual fixing, duplicate row/column detection, coefficient tightening. General (non-removing) bound tightening was tried and reverted — sound for feasibility, but breaks the checker without a harder dual-reconciliation scheme than this session took on (see NOTICE_ALGORITHMS.md).
-- Full Netlib (`--presolve`, revised solver, no crash basis): 76/93 verified, zero checker-rejected claims. **With the crash basis too: 79/93**, beating the original 2-reduction baseline's 77/93 outright. Fixed `greenbeb` (previously wouldn't converge in 1158s+) and `pilotnov`; introduced `maros`/`perold` as new (honest, non-wrong-answer) `NUMERICAL_ERROR`s.
+- Missing: forcing rows, dominated columns/dual fixing, duplicate row/column detection, coefficient tightening. General (non-removing) bound tightening AND duplicate-column merging were both tried and reverted — the first is sound for feasibility but breaks the checker without a harder dual-reconciliation scheme than this session took on; the second fired often on real data (1943 duplicate columns across 34 Netlib instances) and got two real bugs fixed, but a third, deeper cross-reduction ordering issue surfaced that would need unifying two separate postsolve dependency passes to fix properly — reverted rather than shipped on unverified confidence. Both documented in NOTICE_ALGORITHMS.md, not silently dropped.
+- **Full Netlib (`--presolve`, revised solver, with crash basis + perturbed pricing): 80/93 verified, zero checker-rejected claims.** Fixed `greenbeb` (previously wouldn't converge in 1158s+) and `pilotnov`; net effect across all additions this session was clearly positive.
 - Phase 2 gate ("30% size reduction") not formally measured yet, but the reduction set is meaningfully larger now.
 
 ### Phase 3 — GPU / PDLP (days 20–40): ⏸️ Not Started
@@ -38,4 +38,4 @@
 
 ## Bottom Line
 
-Solid on Phase 1 (both gates cleared honestly). Phase 2 has real, working substance but is short of its own checkpoint — the plan itself says a missed day-25 checkpoint should trigger narrowing scope to "LP + GPU path + refinery models" rather than continuing to chase MILP. Phases 3–5 are essentially untouched. Ahead of a typical day-2 pace content-wise, but not yet past its own first real gate.
+Solid on Phase 1 (both gates cleared honestly). Phase 2 has real, working substance but is short of its own checkpoint — the plan itself says a missed day-25 checkpoint should trigger narrowing scope to "LP + GPU path + refinery models" rather than continuing to chase MILP. This session moved Phase 2.1+2.2's combined score from 77/93 to 80/93 (zero checker-rejected claims throughout every change, verified against the full Netlib set at each step, not just spot-checked) and cut non-converging instances from 18 to 4 — real progress toward the 98/98 gate, but still short of it, and two attempted additions (general bound tightening, duplicate-column merging) were found unsound-to-ship and honestly reverted rather than pushed through. Phases 3–5 are essentially untouched. Ahead of a typical day-2 pace content-wise, but not yet past its own first real gate.
