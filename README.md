@@ -9,20 +9,21 @@ dependency graph. See [`../BUILD_PLAN_V2.md`](../BUILD_PLAN_V2.md) for the
 full 75-day plan, phase gates and kill checkpoints; this README only covers
 what is built so far.
 
-## Status: Phase 1.1 — Foundation and proof of life (days 1–3)
+## Status: Phase 1.2 — Sparse LU and the basis update (days 4–10)
 
 What exists:
 
 - `core/` — CSC/CSR sparse matrix, bump-allocator arena, central tolerance policy, the `LpProblem`/`Solution` types every later phase shares
-- `io/` — free-form MPS reader (also parses fixed-form Netlib files) and a plain-text solution writer
-- `checker/` — the independent solution checker (primal residual, dual residual, complementarity gap), which never shares code with the solver it's checking
+- `io/` — MPS reader: tries free-form (whitespace-tokenized) first, falls back to strict fixed-column parsing for the minority of older Netlib files that need it (embedded spaces in names, blank continuation fields) — plus a plain-text solution writer
+- `checker/` — the independent solution checker (primal residual, dual residual, complementarity gap — fixed variables correctly exempted from the complementarity condition), which never shares code with the solver it's checking
 - `simplex/dense_simplex.*` — a **throwaway** dense-tableau bounded-variable two-phase simplex, whose only job is to prove the pipeline works end to end. It is O(rows³) per pivot and is expected to be far too slow on the larger Netlib instances; it is replaced by the sparse revised simplex in Phase 2.1 and should not be extended.
-- `bench/` — `download_netlib.sh` pulls and decodes the real Netlib LP set from netlib.org; `run_netlib.py` runs the solver over every instance and prints a score
+- `la/` — the linear algebra spine: geometric-mean scaling, sparse Markowitz LU with threshold pivoting, Gilbert-Peierls FTRAN/BTRAN, and a basis-update path. **The update is product-form-of-the-inverse (PFI), not full Forrest-Tomlin** — see `la/basis_factorization.hpp`'s header comment for why that substitution was made deliberately rather than risk a subtly-wrong reproduction of Forrest-Tomlin's bump/Hessenberg procedure from memory. Paired with a refactorization policy that bounds the eta chain.
+- `bench/` — `download_netlib.sh` pulls and decodes the real Netlib LP set from netlib.org; `run_netlib.py` runs the solver over every instance and prints a score, scoring by independent-checker PASS rather than solver-claimed status
 
-Not yet built (everything else in the phase map): sparse Markowitz LU +
-Forrest–Tomlin (Phase 1.2), the real revised simplex + presolve (Phase 2),
-PDLP/GPU (Phase 3), MILP + QP (Phase 4), refinery models and packaging
-(Phase 5).
+Not yet built: the real revised simplex + presolve (Phase 2), PDLP/GPU
+(Phase 3), MILP + QP (Phase 4), refinery models and packaging (Phase 5).
+True Forrest-Tomlin (upgrading from the current PFI update) is also
+outstanding, tracked in `NOTICE_ALGORITHMS.md`.
 
 ## Build
 
@@ -62,6 +63,18 @@ wired up (see the comment in that script).
 see that file's header before trusting any pass/fail comparison against
 "the published optimum" for other instances; populating it properly is
 tracked, not guessed.
+
+## Linear algebra (`la/`)
+
+`ctest` covers `la/` with hand-built, identity, singular, threshold-pivoting
+and random 60×60 sparse matrices, plus a 1000-update stress test checked
+against the Phase 1 gate (updates match a fresh refactorization within
+1e-8, and run ≥20x faster — currently ~44.5x). It has also been checked
+against **real** optimal bases: solve a Netlib instance with the Phase 1.1
+dense simplex, reconstruct the actual basis matrix it landed on, and
+confirm the new sparse LU factors and solves it too (residuals at machine
+epsilon). That real-basis check isn't part of `ctest` (it needs the
+downloaded Netlib set) — see `la/manual_checks/`.
 
 ## Standing rules (see `BUILD_PLAN_V2.md` for the full list)
 
