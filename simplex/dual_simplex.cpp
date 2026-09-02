@@ -73,6 +73,39 @@ double MaxBoundViolation(const Workspace& ws) {
   return worst;
 }
 
+// Dual simplex's whole premise is that dual feasibility (every nonbasic
+// reduced cost correctly signed for its bound status) is an INVARIANT,
+// maintained by construction on every pivot — primal feasibility (checked
+// by MaxBoundViolation) is the only thing actually tracked as the
+// termination condition, so a bug that silently breaks the invariant
+// would otherwise go undetected until the checker catches it downstream.
+// Re-verifies it directly, the same "don't just trust the invariant held"
+// discipline as revised_simplex.cpp's phase-2 optimality check.
+double MaxDualInfeasibility(Workspace& ws, const core::LpProblem& problem) {
+  std::vector<double> cost_b(ws.m);
+  for (int slot = 0; slot < ws.m; ++slot) cost_b[slot] = ws.cost[ws.basis[slot]];
+  std::vector<std::pair<int, double>> cost_b_sparse;
+  for (int slot = 0; slot < ws.m; ++slot) {
+    if (cost_b[slot] != 0.0) cost_b_sparse.emplace_back(slot, cost_b[slot]);
+  }
+  std::vector<double> y = ws.bf.Btran(cost_b_sparse);
+
+  double worst = 0.0;
+  for (int j = 0; j < ws.n; ++j) {
+    if (ws.basis_slot_of[j] != -1) continue;
+    double reduced = ws.cost[j];
+    for (const auto& [row, val] : ColumnOf(problem, j)) reduced -= y[row] * val;
+    if (ws.status[j] == Status::kAtLower) {
+      worst = std::max(worst, -reduced);
+    } else if (ws.status[j] == Status::kAtUpper) {
+      worst = std::max(worst, reduced);
+    } else {
+      worst = std::max(worst, std::abs(reduced));
+    }
+  }
+  return worst;
+}
+
 // Solves `problem` (already scaled or not — the caller decides) with no
 // further transformation. SolveDual() below applies scaling around this,
 // same split as revised_simplex.cpp.
@@ -191,12 +224,13 @@ core::Solution SolveDualCore(const core::LpProblem& problem, int max_iterations,
     }
 
     if (leaving_slot == -1) {
-      // Primal-feasible while dual feasibility was maintained throughout
-      // -> optimal. Ground first so this conclusion reflects the true
-      // state, not incremental drift (same defensive pattern as
-      // revised_simplex.cpp's phase-2 optimality check).
+      // Primal-feasible; dual feasibility is supposed to have been
+      // maintained throughout, but that's an invariant to verify, not
+      // trust — see MaxDualInfeasibility's comment. Ground first so both
+      // checks reflect the true state, not incremental drift.
       RecomputeBasicValues(ws, problem);
-      if (MaxBoundViolation(ws) > tol.checker_residual) {
+      if (MaxBoundViolation(ws) > tol.checker_residual ||
+          MaxDualInfeasibility(ws, problem) > tol.checker_residual) {
         solution.status = core::SolveStatus::kNumericalError;
         return solution;
       }
