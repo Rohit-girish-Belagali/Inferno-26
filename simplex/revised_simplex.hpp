@@ -12,13 +12,18 @@ namespace inferno::simplex {
 // every iteration — FTRAN gives the entering column, BTRAN gives pricing
 // duals, and a pivot only costs an O(nnz) eta update.
 //
-// Pricing: Dantzig's rule (largest-magnitude improving reduced cost),
-// falling back to Bland's rule after a run of degenerate (zero-length)
-// pivots to guarantee termination — matches BUILD_PLAN_V2.md's stated
-// pricing order ("Dantzig -> Devex -> steepest edge") starting point.
-// Not yet implemented, tracked as follow-up: Devex/steepest-edge pricing,
-// the Harris two-pass ratio test (this uses a plain textbook ratio test),
-// dual simplex, cost perturbation, crash basis.
+// Pricing: Devex (reduced^2 / reference-weight, approximating steepest
+// edge cheaply), falling back to Bland's rule after a run of degenerate
+// (zero-length) pivots to guarantee termination — matches BUILD_PLAN_V2.md's
+// stated pricing order ("Dantzig -> Devex -> steepest edge"); Dantzig was
+// the first cut and Devex has since replaced it as the default (see
+// NOTICE_ALGORITHMS.md for a measured, honest comparison — Devex is a
+// large win on the instances it helps, e.g. 9x fewer iterations on
+// d2q06c, but is not a strict improvement across the whole Netlib set).
+// Not yet implemented, tracked as follow-up: full steepest-edge pricing,
+// the Harris two-pass ratio test's bound-relaxation machinery (this uses
+// a lighter two-pass test — see the ratio-test comment in the .cpp), dual
+// simplex, cost perturbation, crash basis.
 core::Solution SolveRevised(const core::LpProblem& problem, int max_iterations = -1,
                              const core::TolerancePolicy& tol = core::DefaultTolerances());
 
