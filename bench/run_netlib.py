@@ -77,21 +77,34 @@ def main():
     optima = load_optima()
     rows = []
     counts = {}
+    verified = 0
     for mps_path in instances:
         name = mps_path.stem
         result = run_one(mps_path)
-        counts[result["status"]] = counts.get(result["status"], 0) + 1
+
+        # Standing rule #2: the checker runs on every solve and its verdict
+        # is what counts, not the solver's own claimed status. An OPTIMAL
+        # whose checker did not PASS is a wrong answer, scored as such
+        # rather than folded into "OPTIMAL" — that distinction is the whole
+        # reason the checker exists.
+        checker_passed = result["checker"].startswith("PASS")
+        bucket = result["status"]
+        if result["status"] == "OPTIMAL":
+            bucket = "OPTIMAL_VERIFIED" if checker_passed else "OPTIMAL_CHECKER_FAILED"
+        counts[bucket] = counts.get(bucket, 0) + 1
+        if bucket == "OPTIMAL_VERIFIED":
+            verified += 1
 
         match = ""
-        if result["status"] == "OPTIMAL" and name in optima and result["objective"] is not None:
+        if bucket == "OPTIMAL_VERIFIED" and name in optima and result["objective"] is not None:
             match = "yes" if abs(result["objective"] - optima[name]) <= 1e-6 * max(1.0, abs(optima[name])) else "NO"
 
         rows.append({
-            "name": name, "status": result["status"],
+            "name": name, "status": bucket,
             "objective": result["objective"], "checker": result["checker"],
             "time_s": f"{result['time']:.3f}", "matches_published_optimum": match,
         })
-        print(f"{name:16s} {result['status']:16s} obj={result['objective']} "
+        print(f"{name:16s} {bucket:22s} obj={result['objective']} "
               f"time={result['time']:.3f}s  {result['checker']}")
 
     with open(RESULTS_CSV, "w", newline="") as f:
@@ -100,8 +113,10 @@ def main():
         writer.writerows(rows)
 
     total = len(instances)
-    optimal = counts.get("OPTIMAL", 0)
-    print(f"\nscore: {optimal}/{total} OPTIMAL  ({dict(counts)})")
+    print(f"\nscore: {verified}/{total} OPTIMAL_VERIFIED  ({dict(counts)})")
+    if counts.get("OPTIMAL_CHECKER_FAILED"):
+        print(f"*** {counts['OPTIMAL_CHECKER_FAILED']} instance(s) solved to a claimed optimum "
+              f"the checker REJECTED — see bench/results.csv, these are wrong answers, not noise ***")
     print(f"results written to {RESULTS_CSV}")
     return 0
 

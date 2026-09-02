@@ -1,5 +1,6 @@
 #include "io/mps_reader.hpp"
 
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -26,6 +27,65 @@ std::vector<std::string> Tokenize(const std::string& line) {
   return tokens;
 }
 
+std::string SafeSubstr(const std::string& s, std::size_t start, std::size_t len) {
+  if (start >= s.size()) return "";
+  return s.substr(start, std::min(len, s.size() - start));
+}
+
+std::string Trim(const std::string& s) {
+  std::size_t b = s.find_first_not_of(" \t\r");
+  if (b == std::string::npos) return "";
+  std::size_t e = s.find_last_not_of(" \t\r");
+  return s.substr(b, e - b + 1);
+}
+
+// Standard IBM/MPS fixed-column field layout: field 1 at columns 2-3, field
+// 2 at 5-12, field 3 at 15-22, field 4 at 25-36, field 5 at 40-47, field 6
+// at 50-61 (1-indexed, inclusive). Some genuinely fixed-form files (the
+// older Netlib instances among them) rely on this exactly: a name field can
+// contain internal spaces (e.g. "DEDO3 11"), and a leading name field can be
+// legitimately blank on an RHS/RANGES continuation line — both of which
+// whitespace tokenization corrupts, which is why free-form parsing alone
+// cannot read every Netlib file.
+std::array<std::string, 6> FixedFields(const std::string& line) {
+  return {
+      Trim(SafeSubstr(line, 1, 2)),
+      Trim(SafeSubstr(line, 4, 8)),
+      Trim(SafeSubstr(line, 14, 8)),
+      Trim(SafeSubstr(line, 24, 12)),
+      Trim(SafeSubstr(line, 39, 8)),
+      Trim(SafeSubstr(line, 49, 12)),
+  };
+}
+
+// Produces a token vector with the same shape free-form Tokenize() would
+// produce for a well-formed line in this section, so downstream parsing
+// code is written once and is format-agnostic.
+std::vector<std::string> SectionTokens(const std::string& line, Section section,
+                                        bool fixed_form) {
+  if (!fixed_form) return Tokenize(line);
+
+  std::array<std::string, 6> f = FixedFields(line);
+  std::vector<std::string> out;
+  switch (section) {
+    case Section::kRows:
+      out = {f[0], f[1]};
+      break;
+    case Section::kColumns:
+    case Section::kRhs:
+    case Section::kRanges:
+      out = {f[1], f[2], f[3], f[4], f[5]};
+      break;
+    case Section::kBounds:
+      out = {f[0], f[1], f[2], f[3]};
+      break;
+    default:
+      return Tokenize(line);
+  }
+  while (!out.empty() && out.back().empty()) out.pop_back();
+  return out;
+}
+
 bool IsCommentOrBlank(const std::string& line) {
   if (line.empty()) return true;
   std::size_t first = line.find_first_not_of(" \t\r\n");
@@ -35,7 +95,7 @@ bool IsCommentOrBlank(const std::string& line) {
 
 // True if the line starts in column 0 with a non-space character — that is
 // the MPS convention for a section header (ROWS, COLUMNS, ...), as opposed
-// to a data line which is indented.
+// to a data line which is indented. True in both fixed and free form.
 bool IsSectionHeader(const std::string& line) {
   return !line.empty() && line[0] != ' ' && line[0] != '\t';
 }
@@ -45,9 +105,7 @@ struct RowInfo {
   int index = -1;  // index into LpProblem rows, -1 for the objective row
 };
 
-}  // namespace
-
-core::LpProblem ReadMps(const std::string& path) {
+core::LpProblem ParseMps(const std::string& path, bool fixed_form) {
   std::ifstream file(path);
   if (!file) {
     throw std::runtime_error("ReadMps: cannot open file: " + path);
@@ -120,7 +178,21 @@ core::LpProblem ReadMps(const std::string& path) {
       continue;
     }
 
-    std::vector<std::string> tok = Tokenize(line);
+    // MARKER lines (INTORG/INTEND) are short and never rely on fixed-column
+    // embedded spaces, so always read them free-form regardless of mode.
+    if (section == Section::kColumns) {
+      std::vector<std::string> marker_tok = Tokenize(line);
+      if (marker_tok.size() >= 3 && marker_tok[1] == "'MARKER'") {
+        if (marker_tok[2] == "'INTORG'") {
+          in_integer_block = true;
+        } else if (marker_tok[2] == "'INTEND'") {
+          in_integer_block = false;
+        }
+        continue;
+      }
+    }
+
+    std::vector<std::string> tok = SectionTokens(line, section, fixed_form);
     if (tok.empty()) continue;
 
     switch (section) {
@@ -146,14 +218,6 @@ core::LpProblem ReadMps(const std::string& path) {
         break;
       }
       case Section::kColumns: {
-        if (tok.size() >= 3 && tok[1] == "'MARKER'") {
-          if (tok.size() >= 3 && tok[2] == "'INTORG'") {
-            in_integer_block = true;
-          } else if (tok.size() >= 3 && tok[2] == "'INTEND'") {
-            in_integer_block = false;
-          }
-          break;
-        }
         if (tok.size() < 3 || (tok.size() % 2) == 0) {
           throw std::runtime_error("ReadMps: malformed COLUMNS line " + std::to_string(line_no));
         }
@@ -237,14 +301,14 @@ core::LpProblem ReadMps(const std::string& path) {
     }
     if (section != Section::kBounds) continue;
 
-    std::vector<std::string> tok = Tokenize(line);
+    std::vector<std::string> tok = SectionTokens(line, Section::kBounds, fixed_form);
     if (tok.size() < 3) continue;
     const std::string& type = tok[0];
     const std::string& col_name = tok[2];
     auto it = col_index.find(col_name);
     if (it == col_index.end()) continue;
     int col = it->second;
-    double value = tok.size() > 3 ? std::stod(tok[3]) : 0.0;
+    double value = tok.size() > 3 && !tok[3].empty() ? std::stod(tok[3]) : 0.0;
 
     if (type == "UP") {
       problem.col_hi[col] = value;
@@ -354,6 +418,27 @@ core::LpProblem ReadMps(const std::string& path) {
   }
 
   return problem;
+}
+
+}  // namespace
+
+core::LpProblem ReadMps(const std::string& path) {
+  // Most files (including the majority of the Netlib set) are readable as
+  // free-form. A minority of the older Netlib instances are strictly
+  // fixed-column with embedded spaces in names or blank leading fields that
+  // free-form whitespace tokenization corrupts; retry in fixed-column mode
+  // before giving up.
+  try {
+    return ParseMps(path, /*fixed_form=*/false);
+  } catch (const std::exception& free_form_error) {
+    try {
+      return ParseMps(path, /*fixed_form=*/true);
+    } catch (const std::exception& fixed_form_error) {
+      throw std::runtime_error("ReadMps: failed in both free-form (" +
+                                std::string(free_form_error.what()) + ") and fixed-column (" +
+                                std::string(fixed_form_error.what()) + ") modes for " + path);
+    }
+  }
 }
 
 }  // namespace inferno::io

@@ -70,6 +70,42 @@ void TestHandBuiltLp() {
   }
 }
 
+// A fixed variable (lo == hi) is "at both bounds" simultaneously and is
+// exempt from the complementarity condition — its reduced cost may be any
+// sign at optimality. Regression test for a checker bug where FX-bound
+// variables were flagged as complementarity violations regardless of the
+// sign of their (perfectly valid) nonzero reduced cost.
+void TestFixedVariableComplementarityIsExempt() {
+  using namespace inferno::core;
+
+  LpProblem p;
+  p.name = "fixed_var";
+  p.num_rows = 0;
+  p.num_cols = 1;
+
+  CscMatrix a;
+  a.rows = 0;
+  a.cols = 1;
+  a.col_ptr = {0, 0};
+  p.a = a;
+
+  p.col_lo = {5.0};
+  p.col_hi = {5.0};
+  p.obj = {7.0};
+  p.col_names = {"Z"};
+
+  Solution sol;
+  sol.status = SolveStatus::kOptimal;
+  sol.x = {5.0};
+  sol.row_activity = {};
+  sol.y = {};
+  sol.reduced_cost = {7.0};  // == obj[0] - A^T y with no rows: a valid, nonzero z.
+  sol.objective_value = 35.0;
+
+  auto check = inferno::checker::VerifySolution(p, sol);
+  Expect(check.passed, "fixed variable with nonzero reduced cost passes checker: " + check.message);
+}
+
 // minimize -x, x >= 0, no upper bound, no constraints at all (num_rows =
 // 0). Exercises the m = 0 edge case in the dense simplex.
 void TestUnboundedNoRows() {
@@ -136,6 +172,7 @@ void TestMpsRoundTrip() {
 
 int main() {
   TestHandBuiltLp();
+  TestFixedVariableComplementarityIsExempt();
   TestUnboundedNoRows();
   TestMpsRoundTrip();
 

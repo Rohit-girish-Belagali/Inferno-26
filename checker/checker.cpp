@@ -74,13 +74,22 @@ CheckResult VerifySolution(const core::LpProblem& problem, const core::Solution&
   result.dual_residual = dual_residual;
 
   // --- Complementarity: z_j must be sign-consistent with the bound x_j
-  // sits at, and zero if x_j is strictly interior. ---
+  // sits at, and zero if x_j is strictly interior. A *fixed* variable
+  // (lo == hi, e.g. an MPS FX bound) sits at both bounds simultaneously by
+  // definition but is not subject to a complementarity constraint at all —
+  // its reduced cost may be any sign at optimality, since it cannot move in
+  // either direction regardless of the sign of z. Treating "at both bounds"
+  // as "must satisfy both bounds' sign conditions" (the naive reading) is
+  // wrong and produces false-positive violations on every FX variable.
   double gap = 0.0;
   for (int j = 0; j < problem.num_cols; ++j) {
     double lo = problem.col_lo[j];
     double hi = problem.col_hi[j];
     double x = solution.x[j];
     double z = solution.reduced_cost[j];
+
+    bool fixed = std::isfinite(lo) && std::isfinite(hi) && (hi - lo) <= tol.feasibility;
+    if (fixed) continue;
 
     bool at_lower = std::isfinite(lo) && (x - lo) <= tol.feasibility;
     bool at_upper = std::isfinite(hi) && (hi - x) <= tol.feasibility;
