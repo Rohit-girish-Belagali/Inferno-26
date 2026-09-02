@@ -27,7 +27,13 @@ clang++ -std=c++20 -O2 -I. la/manual_checks/verify_real_bases.cpp \
 /tmp/verify_real_bases bench/netlib/mps/*.mps  # every decoded instance
 ```
 
-Last full-set result: see the commit that introduced this file's history,
-or just rerun it — it takes as long as the dense simplex takes to solve
-whatever's passed in (which for the full set is the same ~20 minutes as
-`bench/run_netlib.py`, since it's driven by the same throwaway solver).
+**No per-instance timeout.** Unlike `bench/run_netlib.py` (60s subprocess
+timeout per instance), this script calls `SolveDense` directly with no
+wrapper — on a large pathological instance the dense simplex's own
+iteration cap can still mean an astronomically expensive number of O(m^3)
+iterations. Running it against the *full* set once left it stuck for over
+6 hours on one instance before being killed; running it against a small
+hand-picked sample (as the default arg-less invocation does) is fine and
+is what's actually been verified. If you want full-set coverage, prefer
+timeout-wrapping each call yourself, or wait for Phase 2.1's revised
+simplex (`simplex/revised_simplex.*`) to replace the dense one here too.

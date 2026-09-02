@@ -1,0 +1,352 @@
+#include "simplex/revised_simplex.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
+#include "core/sparse.hpp"
+#include "la/basis_factorization.hpp"
+#include "la/markowitz_lu.hpp"
+
+namespace inferno::simplex {
+
+namespace {
+
+using core::kInfinity;
+
+enum class Status { kAtLower, kAtUpper, kFree, kBasic };
+
+// The column of M = [A | -I] for variable `var` in the LP's original
+// row-index space — shared by FTRAN (entering column), the basis-matrix
+// builder, and the eta update, so it's computed once per pivot and reused.
+std::vector<std::pair<int, double>> ColumnOf(const core::LpProblem& problem, int var) {
+  std::vector<std::pair<int, double>> col;
+  if (var < problem.num_cols) {
+    for (int p = problem.a.col_ptr[var]; p < problem.a.col_ptr[var + 1]; ++p) {
+      col.emplace_back(problem.a.row_idx[p], problem.a.values[p]);
+    }
+  } else {
+    col.emplace_back(var - problem.num_cols, -1.0);
+  }
+  return col;
+}
+
+core::CscMatrix BuildBasisMatrix(const core::LpProblem& problem, const std::vector<int>& basis) {
+  int m = problem.num_rows;
+  core::CscBuilder builder(m, m);
+  for (int slot = 0; slot < m; ++slot) {
+    for (const auto& [row, val] : ColumnOf(problem, basis[slot])) builder.AddEntry(slot, row, val);
+  }
+  return std::move(builder).Build();
+}
+
+struct Workspace {
+  int m = 0, n = 0;
+  std::vector<double> lo, hi, cost_phase2;
+  std::vector<int> basis;          // slot -> variable
+  std::vector<int> basis_slot_of;  // variable -> slot, -1 if nonbasic
+  std::vector<Status> status;
+  std::vector<double> value;  // current value of every variable
+  la::BasisFactorization bf;
+};
+
+bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<double>& cost,
+              bool is_phase1, int max_iterations, const core::TolerancePolicy& tol,
+              bool& numerical_error, bool& hit_iteration_limit, bool& unbounded,
+              int& iterations_out) {
+  numerical_error = hit_iteration_limit = unbounded = false;
+  iterations_out = 0;
+  int degenerate_streak = 0;
+  constexpr int kBlandThreshold = 50;
+
+  for (int iter = 0; iter < max_iterations; ++iter) {
+    iterations_out = iter + 1;
+
+    std::vector<double> cost_b(ws.m);
+    if (is_phase1) {
+      double total_infeas = 0.0;
+      for (int slot = 0; slot < ws.m; ++slot) {
+        int var = ws.basis[slot];
+        double v = ws.value[var];
+        if (std::isfinite(ws.lo[var]) && v < ws.lo[var] - tol.feasibility) {
+          cost_b[slot] = -1.0;
+          total_infeas += ws.lo[var] - v;
+        } else if (std::isfinite(ws.hi[var]) && v > ws.hi[var] + tol.feasibility) {
+          cost_b[slot] = 1.0;
+          total_infeas += v - ws.hi[var];
+        } else {
+          cost_b[slot] = 0.0;
+        }
+      }
+      if (total_infeas <= tol.feasibility) return true;
+    } else {
+      for (int slot = 0; slot < ws.m; ++slot) cost_b[slot] = cost[ws.basis[slot]];
+    }
+
+    std::vector<std::pair<int, double>> cost_b_sparse;
+    for (int slot = 0; slot < ws.m; ++slot) {
+      if (cost_b[slot] != 0.0) cost_b_sparse.emplace_back(slot, cost_b[slot]);
+    }
+    std::vector<double> y = ws.bf.Btran(cost_b_sparse);
+
+    bool use_bland = degenerate_streak >= kBlandThreshold;
+    int entering = -1, dir = 0;
+    double best_score = 0.0;
+
+    for (int j = 0; j < ws.n; ++j) {
+      if (ws.basis_slot_of[j] != -1) continue;
+      double reduced = is_phase1 ? 0.0 : cost[j];
+      if (j < problem.num_cols) {
+        for (int p = problem.a.col_ptr[j]; p < problem.a.col_ptr[j + 1]; ++p) {
+          reduced -= y[problem.a.row_idx[p]] * problem.a.values[p];
+        }
+      } else {
+        reduced += y[j - problem.num_cols];  // Mcol_j = -e_row, so -y.Mcol = +y[row]
+      }
+
+      bool improving = false;
+      int this_dir = 0;
+      switch (ws.status[j]) {
+        case Status::kAtLower:
+          if (reduced < -tol.optimality) { improving = true; this_dir = +1; }
+          break;
+        case Status::kAtUpper:
+          if (reduced > tol.optimality) { improving = true; this_dir = -1; }
+          break;
+        case Status::kFree:
+          if (reduced < -tol.optimality) { improving = true; this_dir = +1; }
+          else if (reduced > tol.optimality) { improving = true; this_dir = -1; }
+          break;
+        default:
+          break;
+      }
+      if (!improving) continue;
+
+      if (use_bland) {
+        entering = j;
+        dir = this_dir;
+        break;
+      }
+      double score = std::abs(reduced);
+      if (entering == -1 || score > best_score) {
+        best_score = score;
+        entering = j;
+        dir = this_dir;
+      }
+    }
+
+    if (entering == -1) return true;  // optimal for this phase
+
+    std::vector<std::pair<int, double>> entering_col = ColumnOf(problem, entering);
+    std::vector<double> alpha = ws.bf.Ftran(entering_col);
+
+    double self_limit = kInfinity;
+    if (std::isfinite(ws.lo[entering]) && std::isfinite(ws.hi[entering])) {
+      self_limit = ws.hi[entering] - ws.lo[entering];
+    }
+
+    double best_t = self_limit;
+    int leaving_slot = -1;
+    bool leaving_to_upper = false;
+
+    for (int slot = 0; slot < ws.m; ++slot) {
+      double rate = -dir * alpha[slot];
+      if (std::abs(rate) < tol.pivot) continue;
+      int var = ws.basis[slot];
+      double v = ws.value[var];
+      double lo = ws.lo[var], hi = ws.hi[var];
+      bool infeasible_below = std::isfinite(lo) && v < lo - tol.feasibility;
+      bool infeasible_above = std::isfinite(hi) && v > hi + tol.feasibility;
+
+      double t_limit = kInfinity;
+      bool candidate_to_upper = false;
+      if (!infeasible_below && !infeasible_above) {
+        if (rate > tol.pivot && std::isfinite(hi)) {
+          t_limit = (hi - v) / rate;
+          candidate_to_upper = true;
+        } else if (rate < -tol.pivot && std::isfinite(lo)) {
+          t_limit = (lo - v) / rate;
+          candidate_to_upper = false;
+        }
+      } else if (infeasible_below) {
+        if (rate > tol.pivot) { t_limit = (lo - v) / rate; candidate_to_upper = false; }
+      } else {
+        if (rate < -tol.pivot) { t_limit = (hi - v) / rate; candidate_to_upper = true; }
+      }
+
+      if (t_limit < -tol.feasibility) t_limit = 0.0;
+      if (t_limit < best_t) {
+        best_t = t_limit;
+        leaving_slot = slot;
+        leaving_to_upper = candidate_to_upper;
+      }
+    }
+
+    if (!std::isfinite(best_t)) {
+      unbounded = true;
+      return false;
+    }
+    double t = std::max(0.0, best_t);
+    if (t < tol.feasibility) ++degenerate_streak; else degenerate_streak = 0;
+
+    for (int slot = 0; slot < ws.m; ++slot) ws.value[ws.basis[slot]] += (-dir) * alpha[slot] * t;
+    ws.value[entering] += dir * t;
+
+    if (leaving_slot == -1) {
+      ws.status[entering] = (dir > 0) ? Status::kAtUpper : Status::kAtLower;
+      ws.value[entering] = (dir > 0) ? ws.hi[entering] : ws.lo[entering];
+    } else {
+      int leaving_var = ws.basis[leaving_slot];
+      ws.status[leaving_var] = leaving_to_upper ? Status::kAtUpper : Status::kAtLower;
+      ws.value[leaving_var] = leaving_to_upper ? ws.hi[leaving_var] : ws.lo[leaving_var];
+      ws.basis_slot_of[leaving_var] = -1;
+      ws.status[entering] = Status::kBasic;
+      ws.basis_slot_of[entering] = leaving_slot;
+      ws.basis[leaving_slot] = entering;
+
+      bool update_ok = ws.bf.Update(leaving_slot, entering_col, tol);
+      if (!update_ok || ws.bf.ShouldRefactorize()) {
+        core::CscMatrix current = BuildBasisMatrix(problem, ws.basis);
+        if (!ws.bf.Factorize(current, la::MarkowitzOptions{}, tol)) {
+          numerical_error = true;
+          return false;
+        }
+      }
+    }
+  }
+
+  hit_iteration_limit = true;
+  return false;
+}
+
+}  // namespace
+
+core::Solution SolveRevised(const core::LpProblem& problem, int max_iterations,
+                             const core::TolerancePolicy& tol) {
+  core::Solution solution;
+
+  Workspace ws;
+  ws.m = problem.num_rows;
+  ws.n = problem.num_cols + problem.num_rows;
+  ws.lo.resize(ws.n);
+  ws.hi.resize(ws.n);
+  ws.cost_phase2.assign(ws.n, 0.0);
+  ws.status.resize(ws.n);
+  ws.value.assign(ws.n, 0.0);
+  ws.basis.resize(ws.m);
+  ws.basis_slot_of.assign(ws.n, -1);
+
+  for (int j = 0; j < problem.num_cols; ++j) {
+    ws.lo[j] = problem.col_lo[j];
+    ws.hi[j] = problem.col_hi[j];
+    ws.cost_phase2[j] = problem.obj[j];
+  }
+  for (int i = 0; i < problem.num_rows; ++i) {
+    int slack = problem.num_cols + i;
+    ws.lo[slack] = problem.row_lo[i];
+    ws.hi[slack] = problem.row_hi[i];
+  }
+
+  for (int i = 0; i < ws.m; ++i) {
+    int slack = problem.num_cols + i;
+    ws.basis[i] = slack;
+    ws.basis_slot_of[slack] = i;
+    ws.status[slack] = Status::kBasic;
+  }
+  for (int j = 0; j < problem.num_cols; ++j) {
+    if (std::isfinite(ws.lo[j])) {
+      ws.status[j] = Status::kAtLower;
+      ws.value[j] = ws.lo[j];
+    } else if (std::isfinite(ws.hi[j])) {
+      ws.status[j] = Status::kAtUpper;
+      ws.value[j] = ws.hi[j];
+    } else {
+      ws.status[j] = Status::kFree;
+      ws.value[j] = 0.0;
+    }
+  }
+
+  // Initial basis is all-slack (B0 = -I), so xB = A * x_N directly — no
+  // FTRAN needed yet.
+  std::vector<double> x_nonbasic(problem.num_cols);
+  for (int j = 0; j < problem.num_cols; ++j) x_nonbasic[j] = ws.value[j];
+  std::vector<double> ax(ws.m, 0.0);
+  problem.a.MultiplyAdd(x_nonbasic, ax);
+  for (int i = 0; i < ws.m; ++i) ws.value[problem.num_cols + i] = ax[i];
+
+  la::MarkowitzOptions opts;
+  core::CscMatrix b0 = BuildBasisMatrix(problem, ws.basis);
+  if (!ws.bf.Factorize(b0, opts, tol)) {
+    solution.status = core::SolveStatus::kNumericalError;
+    return solution;
+  }
+
+  int iter_cap = max_iterations > 0 ? max_iterations : (200 * (ws.m + ws.n) + 2000);
+
+  bool numerical_error = false, hit_limit = false, unbounded = false;
+  int iters_used = 0, phase1_iters = 0;
+  std::vector<double> zero_cost(ws.n, 0.0);
+  bool phase1_ok = RunPhase(ws, problem, zero_cost, /*is_phase1=*/true, iter_cap, tol,
+                             numerical_error, hit_limit, unbounded, phase1_iters);
+  iters_used += phase1_iters;
+
+  if (numerical_error) { solution.status = core::SolveStatus::kNumericalError; return solution; }
+  if (hit_limit) { solution.status = core::SolveStatus::kIterationLimit; return solution; }
+  if (!phase1_ok) { solution.status = core::SolveStatus::kNumericalError; return solution; }
+
+  double total_infeas = 0.0;
+  for (int j = 0; j < ws.n; ++j) {
+    double v = ws.value[j];
+    if (std::isfinite(ws.lo[j]) && v < ws.lo[j] - tol.feasibility) total_infeas += ws.lo[j] - v;
+    if (std::isfinite(ws.hi[j]) && v > ws.hi[j] + tol.feasibility) total_infeas += v - ws.hi[j];
+  }
+  if (total_infeas > tol.checker_residual) {
+    solution.status = core::SolveStatus::kInfeasible;
+    return solution;
+  }
+
+  bool p2_numerical_error = false, p2_hit_limit = false, p2_unbounded = false;
+  int phase2_iters = 0;
+  bool phase2_ok = RunPhase(ws, problem, ws.cost_phase2, /*is_phase1=*/false, iter_cap, tol,
+                             p2_numerical_error, p2_hit_limit, p2_unbounded, phase2_iters);
+  iters_used += phase2_iters;
+  (void)phase2_ok;
+
+  if (p2_unbounded) { solution.status = core::SolveStatus::kUnbounded; return solution; }
+  if (p2_numerical_error) { solution.status = core::SolveStatus::kNumericalError; return solution; }
+  if (p2_hit_limit) { solution.status = core::SolveStatus::kIterationLimit; return solution; }
+
+  std::vector<double> cost_b(ws.m);
+  for (int slot = 0; slot < ws.m; ++slot) cost_b[slot] = ws.cost_phase2[ws.basis[slot]];
+  std::vector<std::pair<int, double>> cost_b_sparse;
+  for (int slot = 0; slot < ws.m; ++slot) {
+    if (cost_b[slot] != 0.0) cost_b_sparse.emplace_back(slot, cost_b[slot]);
+  }
+  std::vector<double> y = ws.bf.Btran(cost_b_sparse);
+
+  solution.status = core::SolveStatus::kOptimal;
+  solution.x.assign(problem.num_cols, 0.0);
+  for (int j = 0; j < problem.num_cols; ++j) solution.x[j] = ws.value[j];
+
+  solution.row_activity.assign(problem.num_rows, 0.0);
+  for (int i = 0; i < problem.num_rows; ++i) {
+    solution.row_activity[i] = ws.value[problem.num_cols + i];
+  }
+
+  solution.y = y;
+  solution.basis = ws.basis;
+
+  solution.reduced_cost.assign(problem.num_cols, 0.0);
+  std::vector<double> aty(problem.num_cols, 0.0);
+  problem.a.TransposeMultiplyAdd(y, aty);
+  for (int j = 0; j < problem.num_cols; ++j) solution.reduced_cost[j] = problem.obj[j] - aty[j];
+
+  double obj = problem.obj_offset;
+  for (int j = 0; j < problem.num_cols; ++j) obj += problem.obj[j] * solution.x[j];
+  solution.objective_value = obj;
+  solution.iterations = iters_used;
+
+  return solution;
+}
+
+}  // namespace inferno::simplex
