@@ -75,6 +75,16 @@ void RecomputeBasicValues(Workspace& ws, const core::LpProblem& problem) {
   for (int slot = 0; slot < ws.m; ++slot) ws.value[ws.basis[slot]] = xb[slot];
 }
 
+double MaxBoundViolation(const Workspace& ws) {
+  double worst = 0.0;
+  for (int j = 0; j < ws.n; ++j) {
+    double v = ws.value[j];
+    if (std::isfinite(ws.lo[j])) worst = std::max(worst, ws.lo[j] - v);
+    if (std::isfinite(ws.hi[j])) worst = std::max(worst, v - ws.hi[j]);
+  }
+  return worst;
+}
+
 bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<double>& cost,
               bool is_phase1, int max_iterations, const core::TolerancePolicy& tol,
               bool& numerical_error, bool& hit_iteration_limit, bool& unbounded,
@@ -222,6 +232,18 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
     for (const auto& c : candidates) best_t = std::min(best_t, c.t_limit);
 
     if (!std::isfinite(best_t)) {
+      // A mathematically valid "unbounded" conclusion requires standing at
+      // a genuinely feasible point and finding no blocking direction — not
+      // an artifact of an already-corrupted state. An ill-conditioned
+      // basis (a legitimate risk with Dantzig pricing and no Harris ratio
+      // test yet — see file header) can produce enormous FTRAN entries
+      // that fail every ratio-test branch for a variable already grossly
+      // infeasible; declaring that "unbounded" would be a confident wrong
+      // answer, worse than admitting the state is untrustworthy.
+      if (MaxBoundViolation(ws) > tol.checker_residual) {
+        numerical_error = true;
+        return false;
+      }
       unbounded = true;
       return false;
     }
