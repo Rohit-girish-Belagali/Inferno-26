@@ -48,6 +48,7 @@ struct Workspace {
   std::vector<Status> status;
   std::vector<double> value;  // current value of every variable
   la::BasisFactorization bf;
+  std::vector<double> devex_weight;  // Devex reference weights, meaningful for nonbasic j only
 };
 
 // Recomputes every basic variable's value from scratch via one FTRAN call,
@@ -162,7 +163,12 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
         dir = this_dir;
         break;
       }
-      double score = std::abs(reduced);
+      // Devex pricing: score by reduced^2 / reference-weight rather than
+      // plain |reduced| (Dantzig). The weight approximates each nonbasic
+      // direction's steepest-edge norm far more cheaply than computing it
+      // exactly; see the weight-update block below the ratio test, and
+      // NOTICE_ALGORITHMS.md for the citation (Harris 1973).
+      double score = (reduced * reduced) / ws.devex_weight[j];
       if (entering == -1 || score > best_score) {
         best_score = score;
         entering = j;
@@ -282,6 +288,28 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
       ws.basis_slot_of[entering] = leaving_slot;
       ws.basis[leaving_slot] = entering;
 
+      // Devex weight update. Needs the pivot row of the tableau — read it
+      // off with one extra BTRAN seeded at the pivot slot (distinct from
+      // the pricing BTRAN above, which is seeded by cost, not by row
+      // index) — then, for every nonbasic column, how much of that row it
+      // contributes. leaving_var just went nonbasic and gets the new
+      // reference weight directly; every other nonbasic only grows its
+      // weight, never shrinks it (matches the standard Devex update).
+      {
+        double alpha_rq = alpha[leaving_slot];
+        std::vector<double> rho = ws.bf.Btran({{leaving_slot, 1.0}});
+        double w_q = ws.devex_weight[entering];
+        for (int j = 0; j < ws.n; ++j) {
+          if (j == entering || ws.basis_slot_of[j] != -1) continue;
+          double alpha_rj = 0.0;
+          for (const auto& [row, val] : ColumnOf(problem, j)) alpha_rj += rho[row] * val;
+          if (alpha_rj == 0.0) continue;
+          double candidate = (alpha_rj / alpha_rq) * (alpha_rj / alpha_rq) * w_q;
+          if (candidate > ws.devex_weight[j]) ws.devex_weight[j] = candidate;
+        }
+        ws.devex_weight[leaving_var] = std::max(w_q / (alpha_rq * alpha_rq), 1.0);
+      }
+
       bool update_ok = ws.bf.Update(leaving_slot, entering_col, tol);
       if (!update_ok || ws.bf.ShouldRefactorize()) {
         core::CscMatrix current = BuildBasisMatrix(problem, ws.basis);
@@ -314,6 +342,7 @@ core::Solution SolveRevised(const core::LpProblem& problem, int max_iterations,
   ws.value.assign(ws.n, 0.0);
   ws.basis.resize(ws.m);
   ws.basis_slot_of.assign(ws.n, -1);
+  ws.devex_weight.assign(ws.n, 1.0);
 
   for (int j = 0; j < problem.num_cols; ++j) {
     ws.lo[j] = problem.col_lo[j];
@@ -388,6 +417,11 @@ core::Solution SolveRevised(const core::LpProblem& problem, int max_iterations,
     solution.status = core::SolveStatus::kInfeasible;
     return solution;
   }
+
+  // Fresh Devex reference framework for phase 2 — the weights phase 1
+  // built up approximate steepest-edge for the infeasibility objective,
+  // not the real one.
+  ws.devex_weight.assign(ws.n, 1.0);
 
   bool p2_numerical_error = false, p2_hit_limit = false, p2_unbounded = false;
   int phase2_iters = 0;
