@@ -24,6 +24,23 @@ namespace inferno::simplex {
 // phase 1 does for primal feasibility — is not implemented here; this
 // solver reports kNumericalError rather than silently producing a wrong
 // answer. See NOTICE_ALGORITHMS.md.
+//
+// Known open risk, not yet root-caused: an ad hoc full-Netlib-set coverage
+// scan (not part of ctest — a throwaway tool, not committed) got stuck for
+// several minutes on some instance past the first handful tried and was
+// killed rather than left to run indefinitely, unlike revised_simplex.cpp
+// which has real bench/run_netlib.py numbers across the whole set. This
+// solver's per-instance iteration cap (same formula as
+// revised_simplex.cpp's) should make that impossible in principle; either
+// a single iteration is pathologically expensive on whichever instance
+// that was (e.g. thrashing between refactorizations), or something in the
+// dual ratio test's tie-breaking allows a degenerate cycle Bland's rule
+// doesn't catch (revised_simplex.cpp's primal pricing has an explicit
+// Bland's-rule fallback after sustained degenerate pivots — this dual
+// implementation does not). Treat --solver dual as validated only for the
+// instances tests/dual_simplex_test.cpp actually covers, not the whole
+// Netlib set, until this is investigated with a proper per-instance
+// timeout harness (mirroring bench/run_netlib.py's subprocess timeout).
 core::Solution SolveDual(const core::LpProblem& problem, int max_iterations = -1,
                           const core::TolerancePolicy& tol = core::DefaultTolerances());
 

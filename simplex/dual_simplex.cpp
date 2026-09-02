@@ -157,9 +157,16 @@ core::Solution SolveDualCore(const core::LpProblem& problem, int max_iterations,
 
   int iter_cap = max_iterations > 0 ? max_iterations : (200 * (ws.m + ws.n) + 2000);
   int iters_used = 0;
+  int degenerate_streak = 0;
+  constexpr int kBlandThreshold = 50;
 
   for (int iter = 0; iter < iter_cap; ++iter) {
     iters_used = iter + 1;
+    // Anti-cycling fallback, mirroring revised_simplex.cpp's primal
+    // pricing: after a run of degenerate (zero-length) pivots, switch both
+    // selections to smallest-index-first (Bland's rule) instead of
+    // largest-infeasibility / min-ratio, which guarantees termination.
+    bool use_bland = degenerate_streak >= kBlandThreshold;
 
     int leaving_slot = -1;
     double worst = tol.feasibility;
@@ -167,15 +174,19 @@ core::Solution SolveDualCore(const core::LpProblem& problem, int max_iterations,
     for (int slot = 0; slot < ws.m; ++slot) {
       int var = ws.basis[slot];
       double v = ws.value[var];
-      if (std::isfinite(ws.lo[var]) && ws.lo[var] - v > worst) {
-        worst = ws.lo[var] - v;
+      bool below = std::isfinite(ws.lo[var]) && ws.lo[var] - v > tol.feasibility;
+      bool above = std::isfinite(ws.hi[var]) && v - ws.hi[var] > tol.feasibility;
+      if (!below && !above) continue;
+      double viol = below ? (ws.lo[var] - v) : (v - ws.hi[var]);
+      if (use_bland) {
         leaving_slot = slot;
-        leaving_below = true;
+        leaving_below = below;
+        break;
       }
-      if (std::isfinite(ws.hi[var]) && v - ws.hi[var] > worst) {
-        worst = v - ws.hi[var];
+      if (viol > worst) {
+        worst = viol;
         leaving_slot = slot;
-        leaving_below = false;
+        leaving_below = below;
       }
     }
 
@@ -225,6 +236,12 @@ core::Solution SolveDualCore(const core::LpProblem& problem, int max_iterations,
       }
       if (!eligible) continue;
 
+      if (use_bland) {
+        entering = j;
+        dir = this_dir;
+        break;
+      }
+
       double reduced = ws.cost[j];
       for (const auto& [row, val] : ColumnOf(problem, j)) reduced -= y[row] * val;
       double ratio = std::abs(reduced / alpha_rj);
@@ -261,6 +278,7 @@ core::Solution SolveDualCore(const core::LpProblem& problem, int max_iterations,
       return solution;
     }
     t = std::max(0.0, t);
+    if (t < tol.feasibility) ++degenerate_streak; else degenerate_streak = 0;
 
     for (int slot = 0; slot < ws.m; ++slot) ws.value[ws.basis[slot]] += (-dir) * alpha[slot] * t;
     ws.value[entering] += dir * t;
