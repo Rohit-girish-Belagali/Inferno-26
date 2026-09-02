@@ -11,17 +11,17 @@
 - One deliberate substitution: PFI eta update instead of true Forrest-Tomlin (documented, not hidden).
 - Day-10 gate metrics all met (factors correctly, updates within 1e-8, ≥20x faster than refactoring).
 
-### Phase 2.1 — Revised Simplex (days 11–25): 🟡 Partial (Short of Gate)
-- Real revised simplex built — Devex pricing, scaling, two-pass ratio test.
-- 74–75/93 Netlib instances verified, zero false "optimal" claims.
-- The plan's own Checkpoint 2.1 (day 25) explicitly wants 98/98 at 1e-6 — this is a real gap, not close.
-- Missing: steepest-edge pricing, full Harris bound-relaxation, cost perturbation, crash basis — all named as the reason the remaining ~18 hard instances (`pilot87`, `dfl001`, `degen3`-class problems) don't solve.
+### Phase 2.1 — Revised Simplex (days 11–25): 🟡 Partial (Short of Gate, moving)
+- Real revised simplex built — Devex pricing, scaling, two-pass ratio test, and (added this session) a greedy weighted-matching crash basis.
+- 76/93 Netlib instances verified with just the crash basis added (up from 74/93), zero false "optimal" claims. **79/93 combined with the Phase 2.2 presolve additions below** — best score so far, still zero checker-rejected claims.
+- The plan's own Checkpoint 2.1 (day 25) explicitly wants 98/98 at 1e-6 — still a real gap, narrower than before.
+- Missing: steepest-edge pricing, full Harris bound-relaxation, cost perturbation (a safer perturbed-tie-breaking variant was implemented instead of perturbing the objective itself — see NOTICE_ALGORITHMS.md), bound-flipping dual ratio test.
 - Built ahead of schedule: dual simplex (partial — only instances with a trivial dual-feasible start; a general dual phase 1 isn't implemented) and a sequential solve-manager fallback.
 
 ### Phase 2.2 — Presolve (days 26–32): 🟡 Partial, wider than before
 - 5 of ~8 reductions now: fixed-variable, empty-column (original two) plus redundant-row, singleton-row, and free-column-singleton removal (added this session, each with real postsolve dual/primal recovery, not just bound narrowing).
 - Missing: forcing rows, dominated columns/dual fixing, duplicate row/column detection, coefficient tightening. General (non-removing) bound tightening was tried and reverted — sound for feasibility, but breaks the checker without a harder dual-reconciliation scheme than this session took on (see NOTICE_ALGORITHMS.md).
-- Full Netlib (`--presolve`): 76/93 verified, zero checker-rejected claims. Fixed `greenbeb` (previously wouldn't converge in 1158s+) and `pilotnov`; introduced `maros`/`perold` as new (honest, non-wrong-answer) `NUMERICAL_ERROR`s — net -1 vs. the old 2-reduction baseline's 77/93, composition changed for the better on the hardest instance, worse on two small ones.
+- Full Netlib (`--presolve`, revised solver, no crash basis): 76/93 verified, zero checker-rejected claims. **With the crash basis too: 79/93**, beating the original 2-reduction baseline's 77/93 outright. Fixed `greenbeb` (previously wouldn't converge in 1158s+) and `pilotnov`; introduced `maros`/`perold` as new (honest, non-wrong-answer) `NUMERICAL_ERROR`s.
 - Phase 2 gate ("30% size reduction") not formally measured yet, but the reduction set is meaningfully larger now.
 
 ### Phase 3 — GPU / PDLP (days 20–40): ⏸️ Not Started

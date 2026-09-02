@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 #include "core/sparse.hpp"
@@ -16,6 +17,37 @@ namespace {
 using core::kInfinity;
 
 enum class Status { kAtLower, kAtUpper, kFree, kBasic };
+
+// BUILD_PLAN_V2.md Phase 2.1 checklist: "cost perturbation and shifting."
+// The textbook version perturbs the OBJECTIVE ITSELF, then must guarantee
+// the perturbation is small enough to never change which vertex is truly
+// optimal — a bound this project has no principled way to certify for an
+// arbitrary Netlib instance, and getting it wrong would mean silently
+// reporting a suboptimal "optimal". Bland's-rule fallback above already
+// gives PROVEN, zero-risk anti-cycling (guaranteed termination, no
+// wrong-answer risk); what it doesn't help with is picking a WORSE
+// direction than necessary among several equally-scored candidates round
+// after round on a highly degenerate problem, which is exactly what
+// makes some instances grind through many more pivots than they need
+// before Bland's threshold even kicks in.
+//
+// So: perturb only the Devex SCORE used to pick among candidates that are
+// ALL improving, by a fixed, tiny, deterministic per-column factor —
+// never the reduced cost itself, and never the ratio test's bound
+// targets. This can change WHICH of several equally-improving directions
+// gets tried first, and in what order ties are broken pivot after pivot,
+// but can never change whether a direction is improving, never changes a
+// ratio-test outcome, and so can never turn a correct optimum into a
+// wrong one — the entering/leaving selection logic's own correctness
+// conditions are completely unaffected. A deterministic hash rather than
+// real randomness, so a given problem always pivots the same way run to
+// run (matters for reproducing/debugging a slow instance).
+double PerturbationFactor(int j) {
+  uint32_t h = static_cast<uint32_t>(j) * 2654435761u;
+  h ^= h >> 15;
+  double frac = (h % 1000000) / 1000000.0;  // in [0, 1)
+  return 1.0 + 1e-9 * frac;
+}
 
 // The column of M = [A | -I] for variable `var` in the LP's original
 // row-index space — shared by FTRAN (entering column), the basis-matrix
@@ -224,8 +256,11 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
       // plain |reduced| (Dantzig). The weight approximates each nonbasic
       // direction's steepest-edge norm far more cheaply than computing it
       // exactly; see the weight-update block below the ratio test, and
-      // NOTICE_ALGORITHMS.md for the citation (Harris 1973).
-      double score = (reduced * reduced) / ws.devex_weight[j];
+      // NOTICE_ALGORITHMS.md for the citation (Harris 1973). The tiny
+      // per-column perturbation factor is tie-breaking only — see
+      // PerturbationFactor's own comment for why it can't affect
+      // correctness.
+      double score = (reduced * reduced) / ws.devex_weight[j] * PerturbationFactor(j);
       if (entering == -1 || score > best_score) {
         best_score = score;
         entering = j;
