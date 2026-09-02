@@ -66,8 +66,18 @@ void TestFixedAndEmptyColumn() {
 
   auto pre = Presolve(p);
   Expect(!pre.infeasible, "fixed+empty-column case: presolve does not report infeasible");
-  Expect(pre.reduced.num_cols == 1, "fixed+empty-column case: only x survives presolve (got " +
-                                         std::to_string(pre.reduced.num_cols) + " columns)");
+  // Once z is fixed and y is dropped as empty, row 0 collapses to a bound
+  // on x alone (x <= 3) that's already implied by x's own bound (x <= 2)
+  // — redundant-row removal drops the row, which in turn makes x itself
+  // an empty column, resolved by the very next fixpoint round. So the
+  // reduced problem legitimately has ZERO columns left, not one — this
+  // reduction set is more aggressive than the fixed/empty-column-only MVP
+  // this test was originally written against, and correctly so (verified
+  // below: the postsolved solution still matches and passes the checker).
+  Expect(pre.reduced.num_cols == 0, "fixed+empty-column case: presolve fully resolves the "
+                                     "problem via cascading redundant-row + empty-column "
+                                     "reduction (got " + std::to_string(pre.reduced.num_cols) +
+                                         " columns)");
 
   Solution reduced_sol = SolveRevised(pre.reduced);
   Expect(reduced_sol.status == SolveStatus::kOptimal, "reduced problem solves to optimal");

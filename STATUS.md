@@ -18,10 +18,11 @@
 - Missing: steepest-edge pricing, full Harris bound-relaxation, cost perturbation, crash basis — all named as the reason the remaining ~18 hard instances (`pilot87`, `dfl001`, `degen3`-class problems) don't solve.
 - Built ahead of schedule: dual simplex (partial — only instances with a trivial dual-feasible start; a general dual phase 1 isn't implemented) and a sequential solve-manager fallback.
 
-### Phase 2.2 — Presolve (days 26–32): 🟡 Early / Partial
-- Only 2 of ~8 reductions (fixed-variable, empty-column) — the ones that don't need row-dual recovery.
-- Missing: empty/singleton row removal, forcing rows, bound tightening, dominated columns, duplicate detection, coefficient tightening.
-- Phase 2 gate ("30% size reduction") isn't met with just these two.
+### Phase 2.2 — Presolve (days 26–32): 🟡 Partial, wider than before
+- 5 of ~8 reductions now: fixed-variable, empty-column (original two) plus redundant-row, singleton-row, and free-column-singleton removal (added this session, each with real postsolve dual/primal recovery, not just bound narrowing).
+- Missing: forcing rows, dominated columns/dual fixing, duplicate row/column detection, coefficient tightening. General (non-removing) bound tightening was tried and reverted — sound for feasibility, but breaks the checker without a harder dual-reconciliation scheme than this session took on (see NOTICE_ALGORITHMS.md).
+- Full Netlib (`--presolve`): 76/93 verified, zero checker-rejected claims. Fixed `greenbeb` (previously wouldn't converge in 1158s+) and `pilotnov`; introduced `maros`/`perold` as new (honest, non-wrong-answer) `NUMERICAL_ERROR`s — net -1 vs. the old 2-reduction baseline's 77/93, composition changed for the better on the hardest instance, worse on two small ones.
+- Phase 2 gate ("30% size reduction") not formally measured yet, but the reduction set is meaningfully larger now.
 
 ### Phase 3 — GPU / PDLP (days 20–40): ⏸️ Not Started
 - Nothing. Explicitly blocked (no GPU hardware on dev machine, per plan note). UI/dashboard features simulated.
