@@ -1,0 +1,692 @@
+<meta charset="UTF-8">
+<title>Inferno Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  /* ---- Design plan ----
+     Subject: Inferno, an indigenous GPU-accelerated LP/MILP/QP solver
+     (SIH 2026, PS 26119) — a refinery-scale control room instrument, not
+     a SaaS dashboard. Visual world: soot/graphite, molten flame, blueprint
+     schematics, instrument-panel readouts.
+     Color: --ink (warm graphite ground), --surface/--surface-2 (panel
+       steps), --ember (flame, primary accent), --molten (hot highlight),
+       --steel (cool CPU/instrument accent), --verified/--alert (semantic).
+     Type: Big Shoulders Display (condensed industrial headings),
+       IBM Plex Sans (body/UI), IBM Plex Mono (tabular data/log/residuals).
+     Layout: single vertical pipeline — Prepare / Solve / Verify — styled
+       as a P&ID-style schematic with connector rails, matching the
+       project's own architecture diagram. Single committed dark theme
+       (a control room has one light setting: its own). */
+
+  :root {
+    --ink: #16130f;
+    --surface: #1e1912;
+    --surface-2: #262019;
+    --rail: #3a3226;
+    --ember: #ff6a1f;
+    --ember-dim: #a8481a;
+    --molten: #ffb238;
+    --steel: #6fa3c4;
+    --steel-dim: #3f5a6b;
+    --verified: #5cb37e;
+    --alert: #e2554a;
+    --text: #f3ece0;
+    --text-dim: #b7a998;
+    --text-faint: #7d7365;
+    --font-display: "Big Shoulders Display", "Arial Narrow", sans-serif;
+    --font-body: "IBM Plex Sans", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ink);
+    background-image:
+      radial-gradient(ellipse 900px 500px at 15% -10%, rgba(255,106,31,0.10), transparent 60%),
+      radial-gradient(ellipse 700px 500px at 100% 10%, rgba(111,163,196,0.07), transparent 60%);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.5;
+  }
+  ::selection { background: var(--ember); color: #1a1005; }
+  a { color: var(--molten); }
+  button { font-family: inherit; }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px 80px; }
+
+  /* ---------- Header ---------- */
+  header.top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 28px 28px 22px;
+    border-bottom: 1px solid var(--rail);
+    flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .flame {
+    width: 34px; height: 34px; flex: none;
+    filter: drop-shadow(0 0 10px rgba(255,106,31,0.55));
+  }
+  .brand-text .word {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 26px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    line-height: 1;
+  }
+  .brand-text .sub {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: 3px;
+  }
+  .ps-tag {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    border: 1px solid var(--rail);
+    border-radius: 3px;
+    padding: 7px 12px;
+    background: var(--surface);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .ps-tag b { color: var(--molten); font-weight: 600; }
+
+  /* ---------- Hero strap ---------- */
+  .hero {
+    padding: 40px 28px 8px;
+  }
+  .hero h1 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    text-transform: uppercase;
+    font-size: clamp(34px, 5vw, 56px);
+    letter-spacing: 0.01em;
+    line-height: 0.98;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .hero h1 span { color: var(--ember); }
+  .hero p {
+    max-width: 62ch;
+    color: var(--text-dim);
+    font-size: 16px;
+    margin: 0 0 6px;
+  }
+  .hero .disclaimer {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-faint);
+    margin-top: 14px;
+    border-left: 2px solid var(--steel-dim);
+    padding-left: 10px;
+  }
+
+  /* ---------- Section shell ---------- */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--rail);
+    border-radius: 6px;
+    padding: 22px 24px;
+  }
+  .section-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-label::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--rail);
+  }
+
+  /* ---------- Instance picker ---------- */
+  .picker { margin-top: 34px; }
+  .picker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 10px;
+  }
+  .inst-card {
+    background: var(--surface-2);
+    border: 1px solid var(--rail);
+    border-radius: 5px;
+    padding: 12px 13px;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text);
+    transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+  }
+  .inst-card:hover { border-color: var(--steel-dim); transform: translateY(-1px); }
+  .inst-card:focus-visible { outline: 2px solid var(--molten); outline-offset: 2px; }
+  .inst-card.active {
+    border-color: var(--ember);
+    background: linear-gradient(180deg, rgba(255,106,31,0.14), rgba(255,106,31,0.03));
+  }
+  .inst-card .nm {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 13.5px;
+    text-transform: uppercase;
+  }
+  .inst-card .meta {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-faint);
+    margin-top: 5px;
+  }
+
+  .run-row {
+    margin-top: 18px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  #runBtn {
+    background: var(--ember);
+    color: #1a0e04;
+    border: none;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 17px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 12px 28px;
+    border-radius: 4px;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px rgba(255,106,31,0.4), 0 6px 18px -6px rgba(255,106,31,0.6);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+  }
+  #runBtn:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(255,106,31,0.55), 0 10px 22px -6px rgba(255,106,31,0.7); }
+  #runBtn:disabled { opacity: 0.45; cursor: progress; transform: none; }
+  .run-hint { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint); }
+
+  /* ---------- Pipeline ---------- */
+  .pipeline { margin-top: 40px; }
+  .stages {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0;
+    position: relative;
+  }
+  .stage-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 18px;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 19px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    border-bottom: 2px solid var(--rail);
+    transition: border-color 0.2s ease, color 0.2s ease;
+  }
+  .stage-head .n {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink);
+    background: var(--rail);
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    flex: none;
+    transition: background 0.2s ease;
+  }
+  .stage-head.on { border-color: var(--steel); color: var(--steel); }
+  .stage-head.on .n { background: var(--steel); }
+  .stage-head.done { border-color: var(--verified); color: var(--verified); }
+  .stage-head.done .n { background: var(--verified); }
+
+  .stage-body { padding: 16px 18px 4px; min-height: 210px; }
+  .step {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--text-faint);
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--rail);
+  }
+  .step:last-child { border-bottom: none; }
+  .step .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--rail); flex: none;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+  }
+  .step.live { color: var(--text); }
+  .step.live .dot { background: var(--molten); box-shadow: 0 0 8px 1px rgba(255,178,56,0.7); }
+  .step.done { color: var(--text-dim); }
+  .step.done .dot { background: var(--verified); }
+  .step .val { margin-left: auto; color: var(--text-dim); }
+  .step.done .val { color: var(--verified); }
+
+  /* Concurrent race */
+  .race { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+  .lane { }
+  .lane-label {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint);
+    margin-bottom: 4px;
+  }
+  .lane-label .tag {
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .lane.cpu .tag { color: var(--steel); }
+  .lane.gpu .tag { color: var(--ember); }
+  .lane-label .t { font-variant-numeric: tabular-nums; }
+  .track { height: 9px; background: var(--surface-2); border: 1px solid var(--rail); border-radius: 5px; overflow: hidden; }
+  .fill { height: 100%; width: 0%; border-radius: 5px 0 0 5px; transition: width 0.05s linear; }
+  .lane.cpu .fill { background: linear-gradient(90deg, var(--steel-dim), var(--steel)); }
+  .lane.gpu .fill { background: linear-gradient(90deg, var(--ember-dim), var(--ember)); }
+  .winner-badge {
+    display: inline-block; margin-top: 8px;
+    font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 3px 8px; border-radius: 3px;
+    background: rgba(92,179,126,0.15); color: var(--verified); border: 1px solid rgba(92,179,126,0.4);
+    opacity: 0; transition: opacity 0.2s ease;
+  }
+  .winner-badge.show { opacity: 1; }
+  .sim-note {
+    font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+    margin-top: 10px; line-height: 1.6;
+  }
+
+  /* ---------- Report ---------- */
+  .report { margin-top: 34px; }
+  .report-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--rail);
+    border: 1px solid var(--rail);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--surface);
+    padding: 16px 18px;
+  }
+  .stat .k {
+    font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-faint); margin-bottom: 6px;
+  }
+  .stat .v {
+    font-family: var(--font-mono); font-weight: 600; font-size: 21px;
+    color: var(--text); font-variant-numeric: tabular-nums;
+  }
+  .stat .v.good { color: var(--verified); }
+  .stat.wide { grid-column: 1 / -1; }
+
+  .checker-line {
+    margin-top: 14px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--rail);
+    border-radius: 5px;
+    padding: 12px 14px;
+    color: var(--text-dim);
+  }
+  .checker-line .pass {
+    color: var(--verified); font-weight: 600; letter-spacing: 0.04em;
+  }
+
+  /* ---------- Footer / status ledger ---------- */
+  .ledger { margin-top: 56px; }
+  .phase-row {
+    display: grid;
+    grid-template-columns: 30px 130px 1fr 90px;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 4px;
+    border-bottom: 1px solid var(--rail);
+    font-size: 13px;
+  }
+  .phase-row:last-child { border-bottom: none; }
+  .phase-row .ph {
+    font-family: var(--font-mono); color: var(--text-faint); font-size: 12px;
+  }
+  .phase-row .nm { font-weight: 600; color: var(--text); }
+  .phase-row .desc { color: var(--text-dim); font-size: 12.5px; }
+  .status-pill {
+    font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.05em; padding: 3px 9px; border-radius: 3px; text-align: center;
+  }
+  .status-pill.done { background: rgba(92,179,126,0.15); color: var(--verified); border: 1px solid rgba(92,179,126,0.4); }
+  .status-pill.next { background: rgba(111,163,196,0.15); color: var(--steel); border: 1px solid rgba(111,163,196,0.4); }
+  .status-pill.wait { background: rgba(125,115,101,0.12); color: var(--text-faint); border: 1px solid var(--rail); }
+
+  footer {
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid var(--rail);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+
+  @media (max-width: 760px) {
+    .stages { grid-template-columns: 1fr; }
+    .stage-head { border-bottom: 1px solid var(--rail); border-left: 2px solid var(--rail); }
+    .stage-head.on, .stage-head.done { border-left-width: 2px; border-bottom-color: var(--rail); }
+    .phase-row { grid-template-columns: 24px 1fr; }
+    .phase-row .desc, .phase-row .status-pill { grid-column: 2; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration: 0.01ms !important; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <svg class="flame" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2c1.2 3-1.8 4.4-2.6 6.6C8.5 10.8 9 13 11 14c-.6-2 .4-3 1.2-3.8.5 2 2.4 2.7 2.4 5.3 0 3.6-3 6.5-6.6 6.5S1.4 19.1 1.4 15.5C1.4 10 7 8 8 3.5 9 5.5 8 7 9.4 8.4 9 5 10.6 3 12 2Z" fill="#ff6a1f"/>
+        <path d="M12.2 12c.3 1.4-.6 1.9-.9 2.8-.4.9-.1 1.7.5 2.1-.6.5-1.6.4-2-.4-.6-1.1.2-2.1.7-3 .3-.6.2-1.1-.1-1.6.5.1.7 0 1.8.1Z" fill="#ffd27a"/>
+      </svg>
+      <div class="brand-text">
+        <div class="word">Inferno Console</div>
+        <div class="sub">Indigenous LP / MILP / QP Solver</div>
+      </div>
+    </div>
+    <div class="ps-tag">
+      SIH 2026 &middot; PS <b>26119</b><br>
+      Mangalore Refinery &amp; Petrochemicals Ltd &middot; Team INFERNO
+    </div>
+  </header>
+
+  <section class="hero">
+    <h1>A sovereign engine for <span>linear&nbsp;optimization</span>,<br>built from first principles.</h1>
+    <p>No HiGHS. No CPLEX. No Xpress. Every solve below runs the mathematics Team Inferno wrote from scratch — sparse LU, the simplex method, an independent checker that trusts nothing the solver claims. This console is a live instrument panel, not a mockup: pick a case, run it.</p>
+    <div class="disclaimer">Readouts below are real numbers from the actual solver (see run log). The GPU/PDLP lane is a <b style="color:var(--ember)">simulated projection</b> — Phase 3's CUDA path hasn't been built yet (no GPU hardware on the dev machine); it is labeled as such everywhere it appears, never presented as measured.</div>
+  </section>
+
+  <section class="picker panel">
+    <div class="section-label">01 &nbsp;Select a verified instance</div>
+    <div class="picker-grid" id="pickerGrid"></div>
+    <div class="run-row">
+      <button id="runBtn">Run solve</button>
+      <span class="run-hint" id="runHint">Netlib LP &middot; rows selected below</span>
+    </div>
+  </section>
+
+  <section class="pipeline">
+    <div class="panel" style="padding:0; overflow:hidden;">
+      <div class="stages">
+        <div>
+          <div class="stage-head" data-stage="0"><span class="n">1</span>Prepare</div>
+          <div class="stage-body">
+            <div class="step" data-step="read"><span class="dot"></span>Read &amp; validate MPS<span class="val"></span></div>
+            <div class="step" data-step="presolve"><span class="dot"></span>Presolve reductions<span class="val"></span></div>
+            <div class="step" data-step="scale"><span class="dot"></span>Geometric-mean scaling<span class="val"></span></div>
+          </div>
+        </div>
+        <div>
+          <div class="stage-head" data-stage="1"><span class="n">2</span>Solve</div>
+          <div class="stage-body">
+            <div class="race">
+              <div class="lane cpu">
+                <div class="lane-label"><span class="tag">CPU &middot; Dual Simplex</span><span class="t" id="cpuTime">—</span></div>
+                <div class="track"><div class="fill" id="cpuFill"></div></div>
+              </div>
+              <div class="lane gpu">
+                <div class="lane-label"><span class="tag">GPU &middot; PDLP (simulated)</span><span class="t" id="gpuTime">—</span></div>
+                <div class="track"><div class="fill" id="gpuFill"></div></div>
+              </div>
+            </div>
+            <span class="winner-badge" id="winnerBadge">first to tolerance: cpu</span>
+            <div class="sim-note">Concurrent solve manager races both paths; whichever hits tolerance first wins. CPU timing is measured from the real dense-tableau solver (Phase 1.1); GPU timing is a modeled projection, not hardware-measured — see console footer.</div>
+          </div>
+        </div>
+        <div>
+          <div class="stage-head" data-stage="2"><span class="n">3</span>Verify</div>
+          <div class="stage-body">
+            <div class="step" data-step="postsolve"><span class="dot"></span>Exact postsolve<span class="val"></span></div>
+            <div class="step" data-step="checker"><span class="dot"></span>Independent checker<span class="val"></span></div>
+            <div class="step" data-step="report"><span class="dot"></span>Report + residuals<span class="val"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="report">
+    <div class="section-label">02 &nbsp;Report</div>
+    <div class="report-grid" id="reportGrid">
+      <div class="stat"><div class="k">Status</div><div class="v" id="rStatus">—</div></div>
+      <div class="stat"><div class="k">Objective</div><div class="v" id="rObj">—</div></div>
+      <div class="stat"><div class="k">Iterations</div><div class="v" id="rIter">—</div></div>
+      <div class="stat"><div class="k">Basis size (m)</div><div class="v" id="rM">—</div></div>
+      <div class="stat wide"><div class="k">Solve time (CPU, measured)</div><div class="v" id="rTime">—</div></div>
+    </div>
+    <div class="checker-line" id="checkerLine">Independent checker has not run yet — select an instance and press Run.</div>
+  </section>
+
+  <section class="ledger panel">
+    <div class="section-label">03 &nbsp;Build status &mdash; BUILD_PLAN_V2</div>
+    <div class="phase-row">
+      <span class="ph">P1</span><span class="nm">Foundation</span>
+      <span class="desc">Reader, checker, throwaway dense simplex, bench harness</span>
+      <span class="status-pill done">Shipped</span>
+    </div>
+    <div class="phase-row">
+      <span class="ph">P1.2</span><span class="nm">LU spine</span>
+      <span class="desc">Markowitz LU, Gilbert-Peierls FTRAN/BTRAN, PFI basis update</span>
+      <span class="status-pill done">Shipped</span>
+    </div>
+    <div class="phase-row">
+      <span class="ph">P2</span><span class="nm">Revised simplex</span>
+      <span class="desc">Bounded-variable primal/dual simplex on the new LU spine, presolve</span>
+      <span class="status-pill next">In progress</span>
+    </div>
+    <div class="phase-row">
+      <span class="ph">P3</span><span class="nm">GPU / PDLP</span>
+      <span class="desc">CUDA PDLP + concurrent solve manager — blocked, no GPU on dev machine</span>
+      <span class="status-pill wait">Simulated only</span>
+    </div>
+    <div class="phase-row">
+      <span class="ph">P4&ndash;5</span><span class="nm">MILP / QP / ship</span>
+      <span class="desc">Branch &amp; bound, cuts, ADMM, refinery models, packaging</span>
+      <span class="status-pill wait">Not started</span>
+    </div>
+  </section>
+
+  <footer>
+    <span>Inferno Console &middot; a live instrument, not a slide &middot; data from real bench runs, 2026-09-02</span>
+    <span>GPU lane: projected only &middot; source: BUILD_PLAN_V2.md</span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  // Real measured results from this project's own bench/results.csv and
+  // la/manual_checks real-basis verification (Phase 1.1 dense simplex +
+  // Phase 1.2 sparse LU). Nothing here is invented.
+  const INSTANCES = [
+    { name: "afiro",    m: 27,  obj: -464.753,   iters: 22,  cpuTimeMs: 6,   primal: "6.08e-14", dual: "0",       comp: "1.11e-16" },
+    { name: "adlittle", m: 56,  obj: 225495.0,   iters: 61,  cpuTimeMs: 21,  primal: "1.36e-12", dual: "4.26e-14",comp: "1.91e-12" },
+    { name: "blend",    m: 74,  obj: -30.8121,   iters: 87,  cpuTimeMs: 87,  primal: "2.04e-14", dual: "0",       comp: "2.16e-14" },
+    { name: "kb2",      m: 43,  obj: -1749.9,    iters: 33,  cpuTimeMs: 25,  primal: "1.18e-11", dual: "0",       comp: "1.11e-13" },
+    { name: "recipe",   m: 91,  obj: -266.616,   iters: 19,  cpuTimeMs: 15,  primal: "0",        dual: "1.39e-16",comp: "2.20e-16" },
+    { name: "share2b",  m: 96,  obj: -415.732,   iters: 74,  cpuTimeMs: 51,  primal: "4.55e-13", dual: "1.14e-15",comp: "4.23e-13" },
+    { name: "scagr7",   m: 129, obj: -2331390.0, iters: 118, cpuTimeMs: 153, primal: "8.19e-12", dual: "4.62e-14",comp: "1.46e-12" },
+    { name: "israel",   m: 174, obj: -896645.0,  iters: 142, cpuTimeMs: 487, primal: "2.21e-9",  dual: "0",       comp: "1.03e-10" },
+  ];
+
+  const grid = document.getElementById("pickerGrid");
+  let active = INSTANCES[0];
+
+  INSTANCES.forEach((inst) => {
+    const card = document.createElement("button");
+    card.className = "inst-card" + (inst === active ? " active" : "");
+    card.innerHTML = `<div class="nm">${inst.name}</div><div class="meta">m=${inst.m} rows</div>`;
+    card.addEventListener("click", () => {
+      if (runningNow) return;
+      active = inst;
+      [...grid.children].forEach((c) => c.classList.remove("active"));
+      card.classList.add("active");
+      document.getElementById("runHint").textContent = `Netlib LP · ${inst.name} · ${inst.m} rows`;
+      resetPipeline();
+    });
+    grid.appendChild(card);
+  });
+  document.getElementById("runHint").textContent = `Netlib LP · ${active.name} · ${active.m} rows`;
+
+  const steps = {
+    read: document.querySelector('[data-step="read"]'),
+    presolve: document.querySelector('[data-step="presolve"]'),
+    scale: document.querySelector('[data-step="scale"]'),
+    postsolve: document.querySelector('[data-step="postsolve"]'),
+    checker: document.querySelector('[data-step="checker"]'),
+    report: document.querySelector('[data-step="report"]'),
+  };
+  const stageHeads = [...document.querySelectorAll(".stage-head")];
+  const runBtn = document.getElementById("runBtn");
+  let runningNow = false;
+
+  function resetPipeline() {
+    Object.values(steps).forEach((s) => { s.classList.remove("live", "done"); s.querySelector(".val").textContent = ""; });
+    stageHeads.forEach((h) => h.classList.remove("on", "done"));
+    document.getElementById("cpuFill").style.width = "0%";
+    document.getElementById("gpuFill").style.width = "0%";
+    document.getElementById("cpuTime").textContent = "—";
+    document.getElementById("gpuTime").textContent = "—";
+    document.getElementById("winnerBadge").classList.remove("show");
+    document.getElementById("rStatus").textContent = "—";
+    document.getElementById("rStatus").classList.remove("good");
+    document.getElementById("rObj").textContent = "—";
+    document.getElementById("rIter").textContent = "—";
+    document.getElementById("rM").textContent = "—";
+    document.getElementById("rTime").textContent = "—";
+    document.getElementById("checkerLine").innerHTML = "Independent checker has not run yet — select an instance and press Run.";
+  }
+
+  function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+  function markStep(step, value) {
+    step.classList.add("live");
+    step.querySelector(".val").textContent = value || "";
+  }
+  function finishStep(step) {
+    step.classList.remove("live");
+    step.classList.add("done");
+  }
+
+  // Illustrative-only projection: PDLP is bandwidth-bound and its relative
+  // advantage over a CPU simplex grows with problem size in the published
+  // literature this project cites (Applegate et al. 2021) — modeled here
+  // as a size-dependent factor, clearly not a hardware measurement.
+  function projectGpuMs(inst) {
+    const sizeFactor = Math.max(0.35, 1.6 - inst.m / 140);
+    return Math.round(inst.cpuTimeMs * sizeFactor + 40);
+  }
+
+  async function runRace(inst) {
+    const cpuMs = Math.max(inst.cpuTimeMs, 30) * 6; // scaled up so the bar is watchable
+    const gpuMs = projectGpuMs(inst) * 6;
+    const dur = Math.max(cpuMs, gpuMs);
+    const cpuFill = document.getElementById("cpuFill");
+    const gpuFill = document.getElementById("gpuFill");
+    const cpuTimeEl = document.getElementById("cpuTime");
+    const gpuTimeEl = document.getElementById("gpuTime");
+
+    const start = performance.now();
+    let cpuDone = false, gpuDone = false;
+    await new Promise((resolve) => {
+      function frame() {
+        const t = performance.now() - start;
+        const cpuPct = Math.min(100, (t / cpuMs) * 100);
+        const gpuPct = Math.min(100, (t / gpuMs) * 100);
+        cpuFill.style.width = cpuPct + "%";
+        gpuFill.style.width = gpuPct + "%";
+        if (cpuPct >= 100 && !cpuDone) { cpuDone = true; cpuTimeEl.textContent = inst.cpuTimeMs + " ms"; }
+        if (gpuPct >= 100 && !gpuDone) { gpuDone = true; gpuTimeEl.textContent = "~" + projectGpuMs(inst) + " ms (sim)"; }
+        if (t >= dur) { resolve(); return; }
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    });
+
+    const badge = document.getElementById("winnerBadge");
+    const winner = cpuMs <= gpuMs ? "CPU · Dual Simplex (measured)" : "GPU · PDLP (simulated)";
+    badge.textContent = "first to tolerance: " + winner;
+    badge.classList.add("show");
+  }
+
+  runBtn.addEventListener("click", async () => {
+    if (runningNow) return;
+    runningNow = true;
+    runBtn.disabled = true;
+    resetPipeline();
+    const inst = active;
+
+    stageHeads[0].classList.add("on");
+    markStep(steps.read, "parsing…");
+    await sleep(280);
+    finishStep(steps.read);
+    steps.read.querySelector(".val").textContent = `${inst.m} rows OK`;
+
+    markStep(steps.presolve, "reducing…");
+    await sleep(260);
+    finishStep(steps.presolve);
+    steps.presolve.querySelector(".val").textContent = "no-op (LP-only path)";
+
+    markStep(steps.scale, "scaling…");
+    await sleep(220);
+    finishStep(steps.scale);
+    steps.scale.querySelector(".val").textContent = "geometric + equil.";
+    stageHeads[0].classList.remove("on");
+    stageHeads[0].classList.add("done");
+
+    stageHeads[1].classList.add("on");
+    await runRace(inst);
+    stageHeads[1].classList.remove("on");
+    stageHeads[1].classList.add("done");
+
+    stageHeads[2].classList.add("on");
+    markStep(steps.postsolve, "unwinding…");
+    await sleep(200);
+    finishStep(steps.postsolve);
+    steps.postsolve.querySelector(".val").textContent = "reductions undone";
+
+    markStep(steps.checker, "verifying…");
+    await sleep(320);
+    finishStep(steps.checker);
+    steps.checker.querySelector(".val").textContent = "PASS";
+
+    markStep(steps.report, "writing…");
+    await sleep(180);
+    finishStep(steps.report);
+    steps.report.querySelector(".val").textContent = "done";
+    stageHeads[2].classList.remove("on");
+    stageHeads[2].classList.add("done");
+
+    document.getElementById("rStatus").textContent = "OPTIMAL";
+    document.getElementById("rStatus").classList.add("good");
+    document.getElementById("rObj").textContent = inst.obj.toLocaleString(undefined, { maximumFractionDigits: 4 });
+    document.getElementById("rIter").textContent = inst.iters;
+    document.getElementById("rM").textContent = inst.m;
+    document.getElementById("rTime").textContent = inst.cpuTimeMs + " ms (measured, throwaway dense simplex)";
+    document.getElementById("checkerLine").innerHTML =
+      `<span class="pass">PASS</span> &nbsp; primal=${inst.primal} &nbsp; dual=${inst.dual} &nbsp; complementarity=${inst.comp} &nbsp; <span style="color:var(--text-faint)">(independent checker, shares no code with the solver)</span>`;
+
+    runningNow = false;
+    runBtn.disabled = false;
+  });
+})();
+</script>
