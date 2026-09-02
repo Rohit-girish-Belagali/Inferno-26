@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: brew install cmake ninja
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Assert no forbidden solver dependency
+        run: |
+          if grep -riE 'highs|clp|glpk|scip|osqp|cbc|suitesparse' CMakeLists.txt tests/CMakeLists.txt; then
+            echo "forbidden solver dependency referenced in CMake files"
+            exit 1
+          fi
+
+      # BUILD_PLAN_V2.md standing rule #1: CI runs the Netlib set on every
+      # commit and prints the score; a commit that lowers the score should
+      # not merge. The score-regression gate itself is not wired up yet —
+      # only a real revised simplex (Phase 2.1) makes the full set finish
+      # in CI time, so this step stays non-blocking until then.
+      - name: Netlib set (score, non-blocking while Phase 1.1's dense simplex is the only solve path)
+        continue-on-error: true
+        run: |
+          bash bench/download_netlib.sh
+          python3 bench/run_netlib.py

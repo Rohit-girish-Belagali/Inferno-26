@@ -1,0 +1,12 @@
+build/
+*.o
+*.a
+*.so
+*.dylib
+compile_commands.json
+.DS_Store
+
+# Netlib set is fetched by bench/download_netlib.sh, not committed.
+bench/netlib/
+bench/tools/emps
+bench/results.csv
