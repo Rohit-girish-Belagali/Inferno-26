@@ -28,11 +28,33 @@ and is a data-format utility, not a solver dependency. See
 ## Pending
 
 Full Harris two-pass ratio test (bound relaxation), steepest-edge pricing,
-cost perturbation/shifting, crash basis, a bound-flipping dual ratio test,
-a general dual phase 1 (composite/Big-M, for dual simplex instances
-without a trivial dual-feasible start), the remaining presolve reductions
-(forcing rows, dominated columns/dual fixing, duplicate rows/columns,
-coefficient tightening, general bound tightening with real dual
-reconciliation), PDLP, branch-and-bound, cuts, ADMM for QP, true
-Forrest-Tomlin — each gets its citation added here when that module is
-written, per the core reading list in `BUILD_PLAN_V2.md`.
+a bound-flipping dual ratio test, a general dual phase 1 (composite/Big-M,
+for dual simplex instances without a trivial dual-feasible start), the
+remaining presolve reductions (forcing rows, dominated columns/dual
+fixing, duplicate row detection, coefficient tightening, general bound
+tightening with real dual reconciliation), PDLP, branch-and-bound, cuts,
+ADMM for QP, true Forrest-Tomlin — each gets its citation added here when
+that module is written, per the core reading list in `BUILD_PLAN_V2.md`.
+
+**Duplicate-column merging was attempted and reverted.** The design
+(merge two columns with an identical matrix column and identical
+objective coefficient — genuinely common in Netlib: a full-set scan found
+1943 such columns across 34 instances, sometimes heavily, e.g. `d6cube`
+has 735) fired a lot, and a first pass fixed two real bugs found via the
+full Netlib run (an ordering bug in how the merged value was split back —
+other reductions on the same representative column needed the still-
+merged pooled value, not the post-split share). But fixing those surfaced
+a THIRD, deeper one: a column later merged away could have been
+referenced earlier (in application order) by a completely different
+row's free-column-singleton substitution, needing that column's
+INDIVIDUAL final value at a point in postsolve before the merge split
+had run — and unlike the two-reduction interactions already handled
+elsewhere in this file, resolving this one correctly means unifying two
+separate dependency-resolution passes (the primal free-column-singleton
+reverse walk and the later dual-recovery fixpoint) into one, rather than
+adding another isolated special case. Given the standing "zero
+checker-rejected claims" rule and that a clean, fully-verified state
+already existed one commit prior, the responsible call was to revert
+rather than ship a plausible-looking fix without confidence it was the
+last bug in the chain. Tracked here as real, attempted, not-done — not
+silently dropped.
