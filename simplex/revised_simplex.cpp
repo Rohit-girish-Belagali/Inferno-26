@@ -41,6 +41,62 @@ core::CscMatrix BuildBasisMatrix(const core::LpProblem& problem, const std::vect
   return std::move(builder).Build();
 }
 
+// Crash basis (BUILD_PLAN_V2.md Phase 2.1: "do not start from the slack
+// basis"): seed with structural columns instead of an all-slack start, so
+// phase 1 has less work to do reaching feasibility on problems where a
+// structural column is obviously a better fit for a row than its slack.
+//
+// Greedy weighted matching over every (row, column) entry, largest
+// |coefficient| first: accept a candidate if both its row (still slack)
+// and its column (not yet used) are free. This is a heuristic, not a
+// guarantee of anything — the row it ends up assigned to isn't
+// necessarily triangular, and the resulting basis isn't necessarily
+// nonsingular. That's fine: this is purely a warm start. The caller
+// always attempts to factorize whatever this returns and falls back to
+// the plain all-slack basis on failure, so a bad or degenerate crash
+// costs iterations, never correctness — phase 1 and phase 2 still verify
+// feasibility and optimality from scratch regardless of where they
+// started.
+//
+// A row is only crashed out of its slack when that slack has at least
+// one finite bound to become nonbasic at (skips the degenerate case of a
+// row with no constraint at all, row_lo=-inf and row_hi=+inf, vanishingly
+// rare in practice but not worth a special-cased nonbasic-free-variable
+// start).
+std::vector<int> ChooseCrashBasis(const core::LpProblem& problem, const std::vector<double>& lo,
+                                   const std::vector<double>& hi) {
+  int m = problem.num_rows;
+  std::vector<int> basis(m);
+  for (int i = 0; i < m; ++i) basis[i] = problem.num_cols + i;
+
+  struct Candidate {
+    int row, col;
+    double abs_val;
+  };
+  std::vector<Candidate> candidates;
+  for (int j = 0; j < problem.num_cols; ++j) {
+    for (int p = problem.a.col_ptr[j]; p < problem.a.col_ptr[j + 1]; ++p) {
+      int row = problem.a.row_idx[p];
+      int slack = problem.num_cols + row;
+      if (!std::isfinite(lo[slack]) && !std::isfinite(hi[slack])) continue;
+      double v = std::abs(problem.a.values[p]);
+      if (v < 1e-7) continue;  // would make a poorly-conditioned pivot; not worth it
+      candidates.push_back({row, j, v});
+    }
+  }
+  std::sort(candidates.begin(), candidates.end(),
+            [](const Candidate& a, const Candidate& b) { return a.abs_val > b.abs_val; });
+
+  std::vector<char> row_taken(m, 0), col_used(problem.num_cols, 0);
+  for (const auto& c : candidates) {
+    if (row_taken[c.row] || col_used[c.col]) continue;
+    row_taken[c.row] = 1;
+    col_used[c.col] = 1;
+    basis[c.row] = c.col;
+  }
+  return basis;
+}
+
 struct Workspace {
   int m = 0, n = 0;
   std::vector<double> lo, hi, cost_phase2;
@@ -393,20 +449,44 @@ core::Solution SolveRevisedCore(const core::LpProblem& problem, int max_iteratio
     }
   }
 
-  // Initial basis is all-slack (B0 = -I), so xB = A * x_N directly — no
-  // FTRAN needed yet.
-  std::vector<double> x_nonbasic(problem.num_cols);
-  for (int j = 0; j < problem.num_cols; ++j) x_nonbasic[j] = ws.value[j];
-  std::vector<double> ax(ws.m, 0.0);
-  problem.a.MultiplyAdd(x_nonbasic, ax);
-  for (int i = 0; i < ws.m; ++i) ws.value[problem.num_cols + i] = ax[i];
-
   la::MarkowitzOptions opts;
-  core::CscMatrix b0 = BuildBasisMatrix(problem, ws.basis);
-  if (!ws.bf.Factorize(b0, opts, tol)) {
-    solution.status = core::SolveStatus::kNumericalError;
-    return solution;
+
+  // Try the crash basis first; fall back to the plain all-slack basis
+  // (always nonsingular — it's ±I) if it fails to factorize. Purely a
+  // warm start, see ChooseCrashBasis's own comment for why this can never
+  // cost correctness, only iterations.
+  std::vector<int> crash_basis = ChooseCrashBasis(problem, ws.lo, ws.hi);
+  core::CscMatrix crash_matrix = BuildBasisMatrix(problem, crash_basis);
+  if (ws.bf.Factorize(crash_matrix, opts, tol)) {
+    ws.basis = crash_basis;
+    ws.basis_slot_of.assign(ws.n, -1);
+    for (int slot = 0; slot < ws.m; ++slot) {
+      int var = ws.basis[slot];
+      ws.basis_slot_of[var] = slot;
+      ws.status[var] = Status::kBasic;
+    }
+    for (int i = 0; i < ws.m; ++i) {
+      int slack = problem.num_cols + i;
+      if (ws.basis_slot_of[slack] != -1) continue;  // still basic, wasn't displaced
+      // Displaced by a structural column; give it a nonbasic bound —
+      // ChooseCrashBasis only displaces a slack with at least one finite
+      // bound, so one of these is always available.
+      if (std::isfinite(ws.lo[slack])) {
+        ws.status[slack] = Status::kAtLower;
+        ws.value[slack] = ws.lo[slack];
+      } else {
+        ws.status[slack] = Status::kAtUpper;
+        ws.value[slack] = ws.hi[slack];
+      }
+    }
+  } else {
+    core::CscMatrix b0 = BuildBasisMatrix(problem, ws.basis);
+    if (!ws.bf.Factorize(b0, opts, tol)) {
+      solution.status = core::SolveStatus::kNumericalError;
+      return solution;
+    }
   }
+  RecomputeBasicValues(ws, problem);
 
   int iter_cap = max_iterations > 0 ? max_iterations : (200 * (ws.m + ws.n) + 2000);
 
