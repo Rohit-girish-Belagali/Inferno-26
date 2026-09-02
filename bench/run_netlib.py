@@ -69,11 +69,13 @@ def run_one(mps_path: Path, solver_name: str, use_presolve: bool):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--solver", choices=["revised", "dense", "dual"], default="revised",
+    parser.add_argument("--solver", choices=["revised", "dense", "dual", "managed"],
+                         default="revised",
                          help="which solve path to benchmark (default: revised, the real "
                               "Phase 2.1 sparse-LU simplex; dense is the Phase 1.1 throwaway; "
                               "dual only supports instances with a trivial dual-feasible start, "
-                              "see simplex/dual_simplex.hpp)")
+                              "see simplex/dual_simplex.hpp; managed tries dual then falls back "
+                              "to revised, see simplex/solve_manager.hpp)")
     parser.add_argument("--presolve", action="store_true",
                          help="run presolve (fixed-variable + empty-column removal) before "
                               "solving; only affects --solver revised")
