@@ -9,7 +9,7 @@ dependency graph. See [`../BUILD_PLAN_V2.md`](../BUILD_PLAN_V2.md) for the
 full 75-day plan, phase gates and kill checkpoints; this README only covers
 what is built so far.
 
-## Status: Phase 2.1 — the real revised simplex (days 11–25)
+## Status: Phase 2 — revised simplex + presolve (days 11–32)
 
 What exists:
 
@@ -17,16 +17,17 @@ What exists:
 - `io/` — MPS reader: tries free-form (whitespace-tokenized) first, falls back to strict fixed-column parsing for the minority of older Netlib files that need it (embedded spaces in names, blank continuation fields) — plus a plain-text solution writer
 - `checker/` — the independent solution checker (primal residual, dual residual, complementarity gap — fixed variables correctly exempted from the complementarity condition), which never shares code with the solver it's checking
 - `la/` — the linear algebra spine: geometric-mean scaling, sparse Markowitz LU with threshold pivoting, Gilbert-Peierls FTRAN/BTRAN, and a basis-update path. **The update is product-form-of-the-inverse (PFI), not full Forrest-Tomlin** — see `la/basis_factorization.hpp`'s header comment for why. Paired with a refactorization policy that bounds the eta chain.
-- `simplex/revised_simplex.*` — **the real solver now**: bounded-variable primal simplex built on `la/`'s sparse LU instead of a dense tableau. Dantzig pricing (Bland's-rule fallback after sustained degenerate pivots), a two-pass ratio test (minimum step, then most numerically stable among ties — not yet full Harris). See `NOTICE_ALGORITHMS.md`.
+- `simplex/revised_simplex.*` — **the real solver now**: bounded-variable primal simplex built on `la/`'s sparse LU instead of a dense tableau, with scaling applied around the whole solve. Devex pricing (Bland's-rule fallback after sustained degenerate pivots), a two-pass ratio test (minimum step, then most numerically stable among ties — not yet full Harris). Solves **74/93 Netlib instances, zero checker-rejected "optimal" claims** — see `NOTICE_ALGORITHMS.md` for the honest, three-increment measurement (Dantzig → Devex → +scaling) that got there.
 - `simplex/dense_simplex.*` — the Phase 1.1 **throwaway** dense tableau, kept only as a comparison baseline (`--solver dense`); no longer the default and not extended further.
+- `presolve/presolve.*` — fixed-variable substitution and empty-column removal, to a fixpoint, with exact postsolve. Deliberately scoped to the two reductions that never remove a row, so postsolve doesn't need real dual recovery yet — see `NOTICE_ALGORITHMS.md`. Verified via the plan's own standing rule (presolve on/off equivalence, checked against real Netlib data with actual FX-bound variables) but not yet wired into the CLI/bench default path.
 - `dashboard/` — an interactive demo instrument (`dashboard/index.html`) walking the real Prepare → Solve → Verify pipeline against solved instances, using genuine numbers from this project's own bench runs; the GPU/PDLP lane is honestly labeled simulated (Phase 3 hasn't been built — no GPU hardware on the dev machine).
 - `bench/` — `download_netlib.sh` pulls and decodes the real Netlib LP set from netlib.org; `run_netlib.py --solver {revised,dense}` runs either solve path over every instance and prints a score, scoring by independent-checker PASS rather than solver-claimed status
 
-Not yet built: presolve, Devex/steepest-edge pricing, full Harris ratio
-test, dual simplex (rest of Phase 2); PDLP/GPU (Phase 3); MILP + QP
-(Phase 4); refinery models and packaging (Phase 5). True Forrest-Tomlin
-(upgrading from the current PFI update) is also outstanding, tracked in
-`NOTICE_ALGORITHMS.md`.
+Not yet built: the row-removing presolve reductions, steepest-edge
+pricing, full Harris ratio test, dual simplex (rest of Phase 2); PDLP/GPU
+(Phase 3); MILP + QP (Phase 4); refinery models and packaging (Phase 5).
+True Forrest-Tomlin (upgrading from the current PFI update) is also
+outstanding, tracked in `NOTICE_ALGORITHMS.md`.
 
 ## Build
 
@@ -40,7 +41,7 @@ cmake --build build -j
 
 ```bash
 ./build/solver bench/netlib/mps/afiro.mps
-# AFIRO solver=revised status=OPTIMAL objective=-464.753 iterations=18 time=0.0002s
+# AFIRO solver=revised status=OPTIMAL objective=-464.753 iterations=27 time=0.0004s
 # checker: PASS primal=... dual=... complementarity=...
 
 ./build/solver bench/netlib/mps/afiro.mps --solver dense   # Phase 1.1 baseline, for comparison
