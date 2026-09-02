@@ -36,12 +36,14 @@ def load_optima():
     return optima
 
 
-def run_one(mps_path: Path, solver_name: str):
+def run_one(mps_path: Path, solver_name: str, use_presolve: bool):
     start = time.time()
+    args = [str(SOLVER), str(mps_path), "--solver", solver_name]
+    if use_presolve:
+        args.append("--presolve")
     try:
         proc = subprocess.run(
-            [str(SOLVER), str(mps_path), "--solver", solver_name],
-            capture_output=True, text=True, timeout=PER_INSTANCE_TIMEOUT_S,
+            args, capture_output=True, text=True, timeout=PER_INSTANCE_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:
         return {"status": "TIMEOUT", "objective": None, "checker": "", "time": PER_INSTANCE_TIMEOUT_S}
@@ -70,6 +72,9 @@ def main():
     parser.add_argument("--solver", choices=["revised", "dense"], default="revised",
                          help="which solve path to benchmark (default: revised, the real "
                               "Phase 2.1 sparse-LU simplex; dense is the Phase 1.1 throwaway)")
+    parser.add_argument("--presolve", action="store_true",
+                         help="run presolve (fixed-variable + empty-column removal) before "
+                              "solving; only affects --solver revised")
     args = parser.parse_args()
 
     if not SOLVER.exists():
@@ -87,7 +92,7 @@ def main():
     verified = 0
     for mps_path in instances:
         name = mps_path.stem
-        result = run_one(mps_path, args.solver)
+        result = run_one(mps_path, args.solver, args.presolve)
 
         # Standing rule #2: the checker runs on every solve and its verdict
         # is what counts, not the solver's own claimed status. An OPTIMAL

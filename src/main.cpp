@@ -6,6 +6,7 @@
 #include "core/lp_problem.hpp"
 #include "io/mps_reader.hpp"
 #include "io/solution_writer.hpp"
+#include "presolve/presolve.hpp"
 #include "simplex/dense_simplex.hpp"
 #include "simplex/revised_simplex.hpp"
 
@@ -13,9 +14,11 @@ namespace {
 
 void PrintUsage(const char* argv0) {
   std::cerr << "usage: " << argv0
-            << " <problem.mps> [--solution out.sol] [--solver revised|dense]\n"
+            << " <problem.mps> [--solution out.sol] [--solver revised|dense] [--presolve]\n"
                "  --solver revised   (default) sparse LU + Gilbert-Peierls FTRAN/BTRAN + PFI update\n"
-               "  --solver dense     Phase 1.1 throwaway dense tableau, kept for comparison\n";
+               "  --solver dense     Phase 1.1 throwaway dense tableau, kept for comparison\n"
+               "  --presolve         fixed-variable + empty-column removal before solving "
+               "(opt-in; --solver dense ignores it, only revised uses it)\n";
 }
 
 }  // namespace
@@ -29,12 +32,15 @@ int main(int argc, char** argv) {
   std::string mps_path = argv[1];
   std::string solution_path;
   std::string solver_name = "revised";
+  bool use_presolve = false;
   for (int i = 2; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--solution" && i + 1 < argc) {
       solution_path = argv[++i];
     } else if (arg == "--solver" && i + 1 < argc) {
       solver_name = argv[++i];
+    } else if (arg == "--presolve") {
+      use_presolve = true;
     }
   }
   if (solver_name != "revised" && solver_name != "dense") {
@@ -51,13 +57,25 @@ int main(int argc, char** argv) {
   }
 
   auto start = std::chrono::steady_clock::now();
-  inferno::core::Solution solution = solver_name == "dense"
-                                          ? inferno::simplex::SolveDense(problem)
-                                          : inferno::simplex::SolveRevised(problem);
+
+  inferno::core::Solution solution;
+  if (use_presolve && solver_name == "revised") {
+    auto pre = inferno::presolve::Presolve(problem);
+    if (pre.infeasible) {
+      solution.status = inferno::core::SolveStatus::kInfeasible;
+    } else {
+      inferno::core::Solution reduced_solution = inferno::simplex::SolveRevised(pre.reduced);
+      solution = inferno::presolve::Postsolve(problem, pre, reduced_solution);
+    }
+  } else {
+    solution = solver_name == "dense" ? inferno::simplex::SolveDense(problem)
+                                       : inferno::simplex::SolveRevised(problem);
+  }
+
   auto end = std::chrono::steady_clock::now();
   double elapsed_s = std::chrono::duration<double>(end - start).count();
 
-  std::cout << problem.name << " solver=" << solver_name
+  std::cout << problem.name << " solver=" << solver_name << (use_presolve ? "+presolve" : "")
             << " status=" << inferno::io::StatusToString(solution.status)
             << " objective=" << solution.objective_value << " iterations=" << solution.iterations
             << " time=" << elapsed_s << "s\n";
