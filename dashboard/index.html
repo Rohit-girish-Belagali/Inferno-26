@@ -491,7 +491,7 @@
     </div>
     <div class="phase-row">
       <span class="ph">P2</span><span class="nm">Revised simplex</span>
-      <span class="desc">Primal simplex on the LU spine solves 72/93 Netlib instances; presolve, Devex, Harris, dual simplex next</span>
+      <span class="desc">Devex pricing + scaling on the LU spine solves 74/93 Netlib instances, zero false positives; presolve, full Harris, dual simplex next</span>
       <span class="status-pill next">In progress</span>
     </div>
     <div class="phase-row">
@@ -518,14 +518,14 @@
   // la/manual_checks real-basis verification (Phase 1.1 dense simplex +
   // Phase 1.2 sparse LU). Nothing here is invented.
   const INSTANCES = [
-    { name: "afiro",    m: 27,  obj: -464.753,   iters: 18,  cpuTimeMs: 0.16, primal: "5.68e-14", dual: "0",       comp: "7.77e-16" },
-    { name: "adlittle", m: 56,  obj: 225495.0,   iters: 168, cpuTimeMs: 2.61, primal: "4.55e-13", dual: "4.26e-14",comp: "3.33e-12" },
-    { name: "blend",    m: 74,  obj: -30.8121,   iters: 363, cpuTimeMs: 7.02, primal: "2.84e-14", dual: "0",       comp: "2.35e-14" },
-    { name: "kb2",      m: 43,  obj: -1749.9,    iters: 134, cpuTimeMs: 1.34, primal: "2.27e-11", dual: "0",       comp: "2.90e-13" },
-    { name: "recipe",   m: 91,  obj: -266.616,   iters: 77,  cpuTimeMs: 0.30, primal: "0",        dual: "1.39e-16",comp: "2.20e-16" },
-    { name: "share2b",  m: 96,  obj: -415.732,   iters: 171, cpuTimeMs: 1.45, primal: "2.27e-13", dual: "1.14e-15",comp: "6.41e-14" },
-    { name: "scagr7",   m: 129, obj: -2331390.0, iters: 291, cpuTimeMs: 3.45, primal: "5.46e-12", dual: "4.62e-14",comp: "1.55e-11" },
-    { name: "israel",   m: 174, obj: -896645.0,  iters: 352, cpuTimeMs: 8.65, primal: "1.16e-10", dual: "0",       comp: "4.03e-12" },
+    { name: "afiro",    m: 27,  obj: -464.753,   iters: 27,  cpuTimeMs: 0.37, primal: "3.84e-13", dual: "1.50e-16",comp: "2.40e-15" },
+    { name: "adlittle", m: 56,  obj: 225495.0,   iters: 112, cpuTimeMs: 2.94, primal: "2.27e-13", dual: "9.09e-13",comp: "7.73e-13" },
+    { name: "blend",    m: 74,  obj: -30.8121,   iters: 291, cpuTimeMs: 9.42, primal: "2.39e-12", dual: "1.90e-15",comp: "1.22e-12" },
+    { name: "kb2",      m: 43,  obj: -1749.9,    iters: 55,  cpuTimeMs: 0.93, primal: "3.18e-12", dual: "3.07e-15",comp: "6.43e-14" },
+    { name: "recipe",   m: 91,  obj: -266.616,   iters: 77,  cpuTimeMs: 1.54, primal: "0",        dual: "1.39e-16",comp: "2.20e-16" },
+    { name: "share2b",  m: 96,  obj: -415.732,   iters: 123, cpuTimeMs: 3.76, primal: "8.21e-13", dual: "8.30e-14",comp: "7.65e-14" },
+    { name: "scagr7",   m: 129, obj: -2331390.0, iters: 186, cpuTimeMs: 5.29, primal: "1.82e-12", dual: "7.96e-13",comp: "4.20e-13" },
+    { name: "israel",   m: 174, obj: -896645.0,  iters: 127, cpuTimeMs: 9.11, primal: "1.16e-10", dual: "1.14e-12",comp: "1.18e-12" },
   ];
 
   const grid = document.getElementById("pickerGrid");
