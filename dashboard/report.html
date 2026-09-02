@@ -1,0 +1,345 @@
+<meta charset="UTF-8">
+<title>Inferno Bench Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  /* Same design system as dashboard/index.html (Inferno Console), so this
+     reads as the same instrument's "Benchmarking & Analytics" panel —
+     wireframe module 5 — rather than a bolted-on second product. */
+  :root {
+    --ink: #16130f;
+    --surface: #1e1912;
+    --surface-2: #262019;
+    --rail: #3a3226;
+    --ember: #ff6a1f;
+    --molten: #ffb238;
+    --steel: #6fa3c4;
+    --verified: #5cb37e;
+    --alert: #e2554a;
+    --text: #f3ece0;
+    --text-dim: #b7a998;
+    --text-faint: #7d7365;
+    --font-display: "Big Shoulders Display", "Arial Narrow", sans-serif;
+    --font-body: "IBM Plex Sans", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ink);
+    background-image: radial-gradient(ellipse 900px 500px at 15% -10%, rgba(255,106,31,0.10), transparent 60%);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.5;
+  }
+  a { color: var(--molten); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px 80px; }
+
+  header.top {
+    display: flex; align-items: center; justify-content: space-between; gap: 24px;
+    padding: 28px 28px 22px; border-bottom: 1px solid var(--rail); flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .flame { width: 30px; height: 30px; flex: none; filter: drop-shadow(0 0 10px rgba(255,106,31,0.55)); }
+  .brand-text .word { font-family: var(--font-display); font-weight: 800; font-size: 22px; letter-spacing: 0.02em; text-transform: uppercase; line-height: 1; }
+  .brand-text .sub { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 3px; }
+  .back-link { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); border: 1px solid var(--rail); border-radius: 4px; padding: 8px 14px; text-decoration: none; }
+  .back-link:hover { border-color: var(--steel); color: var(--steel); }
+
+  .hero { padding: 36px 28px 4px; }
+  .hero h1 { font-family: var(--font-display); font-weight: 800; text-transform: uppercase; font-size: clamp(28px, 4vw, 42px); letter-spacing: 0.01em; line-height: 1; margin: 0 0 10px; text-wrap: balance; }
+  .hero h1 span { color: var(--ember); }
+  .hero p { max-width: 68ch; color: var(--text-dim); font-size: 15px; margin: 0; }
+
+  /* --- Summary stat row --- */
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1px; background: var(--rail); border: 1px solid var(--rail); border-radius: 6px; overflow: hidden; margin-top: 30px; }
+  .stat { background: var(--surface); padding: 16px 18px; }
+  .stat .k { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-faint); margin-bottom: 6px; }
+  .stat .v { font-family: var(--font-mono); font-weight: 600; font-size: 22px; color: var(--text); font-variant-numeric: tabular-nums; }
+  .stat .v.good { color: var(--verified); }
+  .stat.wide { grid-column: 1 / -1; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  .breakdown { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { font-family: var(--font-mono); font-size: 11px; padding: 4px 10px; border-radius: 12px; display: flex; align-items: center; gap: 6px; }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .chip.verified { background: rgba(92,179,126,0.13); color: var(--verified); }
+  .chip.verified .dot { background: var(--verified); }
+  .chip.warn { background: rgba(255,178,56,0.13); color: var(--molten); }
+  .chip.warn .dot { background: var(--molten); }
+  .chip.crit { background: rgba(226,85,74,0.13); color: var(--alert); }
+  .chip.crit .dot { background: var(--alert); }
+
+  /* --- Filter row --- */
+  .filter-row { display: flex; gap: 8px; margin-top: 30px; flex-wrap: wrap; align-items: center; }
+  .filter-row .label { font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faint); margin-right: 4px; }
+  .filter-btn {
+    font-family: var(--font-mono); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em;
+    background: var(--surface); border: 1px solid var(--rail); color: var(--text-dim);
+    padding: 6px 12px; border-radius: 4px; cursor: pointer;
+  }
+  .filter-btn:hover { border-color: var(--steel); }
+  .filter-btn.active { background: var(--surface-2); border-color: var(--ember); color: var(--text); }
+  .sort-select {
+    font-family: var(--font-mono); font-size: 11.5px; background: var(--surface); border: 1px solid var(--rail);
+    color: var(--text-dim); padding: 6px 10px; border-radius: 4px; margin-left: auto;
+  }
+
+  /* --- Bar list (the chart: magnitude across many named categories) --- */
+  .panel { background: var(--surface); border: 1px solid var(--rail); border-radius: 6px; margin-top: 14px; }
+  .bar-list { max-height: 640px; overflow-y: auto; overflow-x: hidden; }
+  .bar-row {
+    display: grid; grid-template-columns: 110px 1fr 76px; align-items: center; gap: 12px;
+    padding: 5px 16px; border-bottom: 1px solid var(--rail); position: relative; cursor: default;
+  }
+  .bar-row:last-child { border-bottom: none; }
+  .bar-row:hover { background: var(--surface-2); }
+  .bar-row .nm { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-track { height: 14px; background: var(--surface-2); border-radius: 2px; overflow: hidden; position: relative; }
+  .bar-fill { height: 100%; border-radius: 2px 0 0 2px; min-width: 2px; }
+  .bar-fill.verified { background: linear-gradient(90deg, #3d8058, var(--verified)); }
+  .bar-fill.warn { background: linear-gradient(90deg, #a87418, var(--molten)); }
+  .bar-fill.crit { background: linear-gradient(90deg, #9c352d, var(--alert)); }
+  .bar-row .t { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); text-align: right; font-variant-numeric: tabular-nums; }
+
+  .tooltip {
+    position: fixed; pointer-events: none; z-index: 20;
+    background: var(--ink); border: 1px solid var(--ember); border-radius: 5px;
+    padding: 10px 12px; font-family: var(--font-mono); font-size: 11px; color: var(--text);
+    box-shadow: 0 8px 24px -8px rgba(0,0,0,0.6); max-width: 280px; opacity: 0; transition: opacity 0.1s ease;
+  }
+  .tooltip.show { opacity: 1; }
+  .tooltip .row { display: flex; justify-content: space-between; gap: 16px; padding: 1px 0; }
+  .tooltip .row .k2 { color: var(--text-faint); }
+
+  /* --- Table view (accessibility: always available alongside the chart) --- */
+  .table-toggle { margin-top: 24px; }
+  .table-toggle summary {
+    cursor: pointer; font-family: var(--font-mono); font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-dim); padding: 8px 0;
+  }
+  .table-toggle summary:hover { color: var(--text); }
+  table.data-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 11.5px; margin-top: 8px; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--rail); border-radius: 6px; }
+  table.data-table th { text-align: left; padding: 8px 12px; color: var(--text-faint); text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; border-bottom: 1px solid var(--rail); position: sticky; top: 0; background: var(--surface); }
+  table.data-table td { padding: 6px 12px; border-bottom: 1px solid var(--rail); color: var(--text-dim); white-space: nowrap; }
+  table.data-table td.nm { color: var(--text); }
+  table.data-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.data-table tr:last-child td { border-bottom: none; }
+
+  .disclaimer {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); margin-top: 28px;
+    border-left: 2px solid var(--rail); padding-left: 12px; line-height: 1.7;
+  }
+
+  footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--rail); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
+
+  @media (max-width: 640px) {
+    .bar-row { grid-template-columns: 84px 1fr 60px; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <svg class="flame" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2c1.2 3-1.8 4.4-2.6 6.6C8.5 10.8 9 13 11 14c-.6-2 .4-3 1.2-3.8.5 2 2.4 2.7 2.4 5.3 0 3.6-3 6.5-6.6 6.5S1.4 19.1 1.4 15.5C1.4 10 7 8 8 3.5 9 5.5 8 7 9.4 8.4 9 5 10.6 3 12 2Z" fill="#ff6a1f"/>
+        <path d="M12.2 12c.3 1.4-.6 1.9-.9 2.8-.4.9-.1 1.7.5 2.1-.6.5-1.6.4-2-.4-.6-1.1.2-2.1.7-3 .3-.6.2-1.1-.1-1.6.5.1.7 0 1.8.1Z" fill="#ffd27a"/>
+      </svg>
+      <div class="brand-text">
+        <div class="word">Inferno Bench Report</div>
+        <div class="sub">Benchmarking &amp; Performance Analytics</div>
+      </div>
+    </div>
+    <a class="back-link" href="index.html">&larr; Back to Console</a>
+  </header>
+
+  <section class="hero">
+    <h1>93 real Netlib instances, <span>run today.</span></h1>
+    <p>Every row below is a real solve from the actual sparse-LU revised simplex — Devex pricing, geometric-mean scaling, PFI basis updates. No cherry-picking: this is the complete decoded Netlib set, sorted however you like.</p>
+  </section>
+
+  <section class="stat-row">
+    <div class="stat"><div class="k">Score</div><div class="v good" id="statScore">—</div></div>
+    <div class="stat"><div class="k">Median time</div><div class="v" id="statMedian">—</div></div>
+    <div class="stat"><div class="k">Slowest solved</div><div class="v" id="statSlowest">—</div></div>
+    <div class="stat"><div class="k">Fastest</div><div class="v" id="statFastest">—</div></div>
+    <div class="stat wide">
+      <span class="k" style="margin:0;">Breakdown</span>
+      <div class="breakdown" id="breakdown"></div>
+    </div>
+  </section>
+
+  <div class="filter-row">
+    <span class="label">Filter</span>
+    <button class="filter-btn active" data-filter="all">All (93)</button>
+    <button class="filter-btn" data-filter="OPTIMAL_VERIFIED">Verified</button>
+    <button class="filter-btn" data-filter="TIMEOUT">Timeout</button>
+    <button class="filter-btn" data-filter="NUMERICAL_ERROR">Numerical error</button>
+    <button class="filter-btn" data-filter="ITERATION_LIMIT">Iteration limit</button>
+    <select class="sort-select" id="sortSelect">
+      <option value="time-desc">Sort: slowest first</option>
+      <option value="time-asc">Sort: fastest first</option>
+      <option value="name">Sort: name (A–Z)</option>
+    </select>
+  </div>
+
+  <div class="panel">
+    <div class="bar-list" id="barList"></div>
+  </div>
+
+  <details class="table-toggle">
+    <summary>View as a plain data table</summary>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>Instance</th><th>Status</th><th>Objective</th><th>Time (s)</th><th>Primal residual</th></tr></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </details>
+
+  <div class="disclaimer">
+    Data source: <code>bench/results.csv</code>, generated by <code>bench/run_netlib.py --solver revised --presolve</code>. "Verified" means the independent checker (<code>checker/checker.cpp</code>, which shares no code with the solver) confirmed the primal residual, dual residual and complementarity gap all pass — not just that the solver claimed optimal. Solve-time bars use a log scale (a 0.01s solve and a 30s solve otherwise wouldn't both fit on one screen) — read exact values from the tooltip or the table.
+  </div>
+
+  <footer>
+    <span>Inferno Bench Report &middot; real data, no cherry-picking &middot; 2026-09-02</span>
+    <span>93/93 attempted &middot; source: bench/results.csv</span>
+  </footer>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+(() => {
+  const DATA = [{"name": "25fv47", "status": "OPTIMAL_VERIFIED", "obj": 5501.85, "time": 2.117, "primal": 1.94261e-12}, {"name": "80bau3b", "status": "OPTIMAL_VERIFIED", "obj": 987224.0, "time": 6.957, "primal": 3.46745e-12}, {"name": "adlittle", "status": "OPTIMAL_VERIFIED", "obj": 225495.0, "time": 0.011, "primal": 2.27374e-13}, {"name": "afiro", "status": "OPTIMAL_VERIFIED", "obj": -464.753, "time": 0.005, "primal": 3.83693e-13}, {"name": "agg", "status": "OPTIMAL_VERIFIED", "obj": -35991800.0, "time": 0.017, "primal": 1.37788e-10}, {"name": "agg2", "status": "OPTIMAL_VERIFIED", "obj": -20239300.0, "time": 0.031, "primal": 4.64979e-10}, {"name": "agg3", "status": "OPTIMAL_VERIFIED", "obj": 10312100.0, "time": 0.027, "primal": 1.62981e-09}, {"name": "bandm", "status": "OPTIMAL_VERIFIED", "obj": -158.628, "time": 0.111, "primal": 1.08605e-12}, {"name": "beaconfd", "status": "OPTIMAL_VERIFIED", "obj": 33592.5, "time": 0.018, "primal": 4.15552e-11}, {"name": "blend", "status": "OPTIMAL_VERIFIED", "obj": -30.8121, "time": 0.016, "primal": 2.39453e-12}, {"name": "bnl1", "status": "OPTIMAL_VERIFIED", "obj": 1977.63, "time": 0.439, "primal": 5.22959e-12}, {"name": "bnl2", "status": "OPTIMAL_VERIFIED", "obj": 1811.24, "time": 4.677, "primal": 2.81268e-12}, {"name": "boeing1", "status": "OPTIMAL_VERIFIED", "obj": -335.214, "time": 0.106, "primal": 2.27374e-13}, {"name": "boeing2", "status": "OPTIMAL_VERIFIED", "obj": -315.019, "time": 0.014, "primal": 6.97042e-12}, {"name": "bore3d", "status": "ITERATION_LIMIT", "obj": 0.0, "time": 13.46, "primal": null}, {"name": "brandy", "status": "ITERATION_LIMIT", "obj": 0.0, "time": 11.743, "primal": null}, {"name": "capri", "status": "OPTIMAL_VERIFIED", "obj": 2690.01, "time": 0.044, "primal": 2.90523e-12}, {"name": "cycle", "status": "TIMEOUT", "obj": null, "time": 60.0, "primal": null}, {"name": "czprob", "status": "OPTIMAL_VERIFIED", "obj": 2185200.0, "time": 0.971, "primal": 7.27596e-12}, {"name": "d2q06c", "status": "OPTIMAL_VERIFIED", "obj": 122784.0, "time": 21.931, "primal": 8.22778e-10}, {"name": "d6cube", "status": "TIMEOUT", "obj": null, "time": 60.0, "primal": null}, {"name": "degen2", "status": "OPTIMAL_VERIFIED", "obj": -1435.18, "time": 0.28, "primal": 1.33227e-15}, {"name": "degen3", "status": "TIMEOUT", "obj": null, "time": 60.0, "primal": null}, {"name": "dfl001", "status": "NUMERICAL_ERROR", "obj": 0.0, "time": 39.386, "primal": null}, {"name": "e226", "status": "OPTIMAL_VERIFIED", "obj": -11.6389, "time": 0.045, "primal": 2.41585e-13}, {"name": "etamacro", "status": "OPTIMAL_VERIFIED", "obj": -755.715, "time": 0.084, "primal": 7.08344e-13}, {"name": "fffff800", "status": "OPTIMAL_VERIFIED", "obj": 555680.0, "time": 0.147, "primal": 5.82077e-11}, {"name": "finnis", "status": "OPTIMAL_VERIFIED", "obj": 172791.0, "time": 0.072, "primal": 1.81899e-12}, {"name": "fit1d", "status": "OPTIMAL_VERIFIED", "obj": -9146.38, "time": 0.28, "primal": 2.18279e-11}, {"name": "fit1p", "status": "OPTIMAL_VERIFIED", "obj": 9146.38, "time": 0.516, "primal": 8.52651e-14}, {"name": "fit2d", "status": "OPTIMAL_VERIFIED", "obj": -68464.3, "time": 24.01, "primal": 2.47354e-10}, {"name": "fit2p", "status": "TIMEOUT", "obj": null, "time": 60.0, "primal": null}, {"name": "forplan", "status": "OPTIMAL_VERIFIED", "obj": -664.219, "time": 0.453, "primal": 9.31323e-10}, {"name": "ganges", "status": "OPTIMAL_VERIFIED", "obj": -109586.0, "time": 0.522, "primal": 6.9889e-11}, {"name": "gfrd-pnc", "status": "OPTIMAL_VERIFIED", "obj": 6902240.0, "time": 0.131, "primal": 1.45519e-11}, {"name": "greenbea", "status": "OPTIMAL_VERIFIED", "obj": -72555200.0, "time": 21.521, "primal": 9.08028e-08}, {"name": "greenbeb", "status": "OPTIMAL_VERIFIED", "obj": -4302260.0, "time": 20.196, "primal": 6.08047e-11}, {"name": "grow15", "status": "NUMERICAL_ERROR", "obj": 0.0, "time": 0.113, "primal": null}, {"name": "grow22", "status": "NUMERICAL_ERROR", "obj": 0.0, "time": 0.563, "primal": null}, {"name": "grow7", "status": "OPTIMAL_VERIFIED", "obj": -47787800.0, "time": 0.034, "primal": 1.94671e-08}, {"name": "israel", "status": "OPTIMAL_VERIFIED", "obj": -896645.0, "time": 0.018, "primal": 1.16415e-10}, {"name": "kb2", "status": "OPTIMAL_VERIFIED", "obj": -1749.9, "time": 0.007, "primal": 3.18323e-12}, {"name": "lotfi", "status": "OPTIMAL_VERIFIED", "obj": -25.2647, "time": 0.027, "primal": 1.12777e-09}, {"name": "maros-r7", "status": "OPTIMAL_VERIFIED", "obj": 1497190.0, "time": 31.888, "primal": 3.38332e-10}, {"name": "maros", "status": "NUMERICAL_ERROR", "obj": 0.0, "time": 0.067, "primal": null}, {"name": "modszk1", "status": "TIMEOUT", "obj": null, "time": 60.0, "primal": null}, {"name": "nesm", "status": "OPTIMAL_VERIFIED", "obj": 14076000.0, "time": 1.794, "primal": 1.22677e-10}, {"name": "perold", "status": "OPTIMAL_VERIFIED", "obj": -9380.76, "time": 0.923, "primal": 1.55524e-09}, {"name": "pilot.ja", "status": "OPTIMAL_VERIFIED", "obj": -6113.14, "time": 2.508, "primal": 9.26593e-09}, {"name": "pilot", "status": "OPTIMAL_VERIFIED", "obj": -557.49, "time": 21.279, "primal": 5.26618e-11}, {"name": "pilot.we", "status": "OPTIMAL_VERIFIED", "obj": -2720110.0, "time": 1.609, "primal": 1.62838e-09}, {"name": "pilot4", "status": "OPTIMAL_VERIFIED", "obj": -2581.14, "time": 0.384, "primal": 7.2032e-10}, {"name": "pilot87", "status": "NUMERICAL_ERROR", "obj": 0.0, "time": 30.416, "primal": null}, {"name": "pilotnov", "status": "OPTIMAL_VERIFIED", "obj": -4497.28, "time": 1.24, "primal": 1.80186e-08}, {"name": "recipe", "status": "OPTIMAL_VERIFIED", "obj": -266.616, "time": 0.01, "primal": 0.0}, {"name": "sc105", "status": "OPTIMAL_VERIFIED", "obj": -52.2021, "time": 0.009, "primal": 5.11591e-13}, {"name": "sc205", "status": "OPTIMAL_VERIFIED", "obj": -52.2021, "time": 0.02, "primal": 2.50111e-12}, {"name": "sc50a", "status": "OPTIMAL_VERIFIED", "obj": -64.5751, "time": 0.007, "primal": 5.68434e-14}, {"name": "sc50b", "status": "OPTIMAL_VERIFIED", "obj": -70.0, "time": 0.006, "primal": 8.52651e-14}, {"name": "scagr25", "status": "OPTIMAL_VERIFIED", "obj": -14753400.0, "time": 0.083, "primal": 1.09139e-11}, {"name": "scagr7", "status": "OPTIMAL_VERIFIED", "obj": -2331390.0, "time": 0.01, "primal": 1.81899e-12}, {"name": "scfxm1", "status": "OPTIMAL_VERIFIED", "obj": 18416.8, "time": 0.083, "primal": 5.96905e-12}, {"name": "scfxm2", "status": "OPTIMAL_VERIFIED", "obj": 36660.3, "time": 0.277, "primal": 6.72739e-12}, {"name": "scfxm3", "status": "OPTIMAL_VERIFIED", "obj": 54901.3, "time": 0.597, "primal": 3.87005e-12}, {"name": "scorpion", "status": "OPTIMAL_VERIFIED", "obj": 1878.12, "time": 0.04, "primal": 1.88738e-15}, {"name": "scrs8", "status": "OPTIMAL_VERIFIED", "obj": 904.297, "time": 0.165, "primal": 8.17124e-14}, {"name": "scsd1", "status": "NUMERICAL_ERROR", "obj": 0.0, "time": 0.017, "primal": null}, {"name": "scsd6", "status": "OPTIMAL_VERIFIED", "obj": 50.5, "time": 0.215, "primal": 4.44089e-16}, {"name": "scsd8", "status": "NUMERICAL_ERROR", "obj": 0.0, "time": 2.556, "primal": null}, {"name": "sctap1", "status": "OPTIMAL_VERIFIED", "obj": 1412.25, "time": 0.042, "primal": 1.42109e-14}, {"name": "sctap2", "status": "OPTIMAL_VERIFIED", "obj": 1724.81, "time": 0.456, "primal": 1.11022e-14}, {"name": "sctap3", "status": "OPTIMAL_VERIFIED", "obj": 1424.0, "time": 0.892, "primal": 7.88258e-15}, {"name": "seba", "status": "OPTIMAL_VERIFIED", "obj": 15711.6, "time": 0.091, "primal": 9.21219e-12}, {"name": "share1b", "status": "OPTIMAL_VERIFIED", "obj": -76589.3, "time": 0.021, "primal": 1.90792e-10}, {"name": "share2b", "status": "OPTIMAL_VERIFIED", "obj": -415.732, "time": 0.01, "primal": 8.20677e-13}, {"name": "shell", "status": "OPTIMAL_VERIFIED", "obj": 1208830000.0, "time": 0.139, "primal": 0.0}, {"name": "ship04l", "status": "OPTIMAL_VERIFIED", "obj": 1793320.0, "time": 0.192, "primal": 1.70974e-14}, {"name": "ship04s", "status": "OPTIMAL_VERIFIED", "obj": 1798710.0, "time": 0.121, "primal": 4.35207e-14}, {"name": "ship08l", "status": "OPTIMAL_VERIFIED", "obj": 1909060.0, "time": 0.612, "primal": 7.47735e-14}, {"name": "ship08s", "status": "OPTIMAL_VERIFIED", "obj": 1920100.0, "time": 0.249, "primal": 3.56937e-14}, {"name": "ship12l", "status": "OPTIMAL_VERIFIED", "obj": 1470190.0, "time": 1.382, "primal": 8.76521e-14}, {"name": "ship12s", "status": "OPTIMAL_VERIFIED", "obj": 1489240.0, "time": 0.504, "primal": 4.84057e-14}, {"name": "sierra", "status": "OPTIMAL_VERIFIED", "obj": 15394400.0, "time": 0.354, "primal": 4.59519e-13}, {"name": "stair", "status": "OPTIMAL_VERIFIED", "obj": -251.267, "time": 0.155, "primal": 9.35129e-13}, {"name": "standata", "status": "OPTIMAL_VERIFIED", "obj": 1257.7, "time": 0.026, "primal": 5.86198e-14}, {"name": "standgub", "status": "OPTIMAL_VERIFIED", "obj": 1257.7, "time": 0.024, "primal": 5.86198e-14}, {"name": "standmps", "status": "OPTIMAL_VERIFIED", "obj": 1406.02, "time": 0.063, "primal": 1.11485e-13}, {"name": "stocfor1", "status": "OPTIMAL_VERIFIED", "obj": -41132.0, "time": 0.017, "primal": 1.29148e-10}, {"name": "stocfor2", "status": "TIMEOUT", "obj": null, "time": 60.0, "primal": null}, {"name": "tuff", "status": "ITERATION_LIMIT", "obj": 0.0, "time": 36.592, "primal": null}, {"name": "vtp.base", "status": "OPTIMAL_VERIFIED", "obj": 129831.0, "time": 0.021, "primal": 3.82961e-11}, {"name": "wood1p", "status": "TIMEOUT", "obj": null, "time": 60.0, "primal": null}, {"name": "woodw", "status": "TIMEOUT", "obj": null, "time": 60.0, "primal": null}]
+;
+
+  const STATUS_CLASS = {
+    OPTIMAL_VERIFIED: "verified",
+    TIMEOUT: "warn",
+    ITERATION_LIMIT: "warn",
+    NUMERICAL_ERROR: "crit",
+    OPTIMAL_CHECKER_FAILED: "crit",
+    UNBOUNDED: "crit",
+    INFEASIBLE: "warn",
+  };
+  const STATUS_LABEL = {
+    OPTIMAL_VERIFIED: "Verified",
+    TIMEOUT: "Timeout",
+    ITERATION_LIMIT: "Iteration limit",
+    NUMERICAL_ERROR: "Numerical error",
+    OPTIMAL_CHECKER_FAILED: "Checker rejected",
+    UNBOUNDED: "Unbounded",
+    INFEASIBLE: "Infeasible",
+  };
+
+  function fmtTime(t) {
+    if (t < 0.001) return "<1ms";
+    if (t < 1) return (t * 1000).toFixed(0) + "ms";
+    return t.toFixed(t < 10 ? 2 : 1) + "s";
+  }
+  function fmtObj(o) {
+    if (o === null || o === undefined) return "—";
+    const a = Math.abs(o);
+    if (a !== 0 && (a >= 1e7 || a < 1e-3)) return o.toExponential(3);
+    return o.toLocaleString(undefined, { maximumFractionDigits: 3 });
+  }
+  function fmtPrimal(p) {
+    if (p === null || p === undefined) return "—";
+    return p.toExponential(2);
+  }
+
+  // ---- Summary stats ----
+  const verified = DATA.filter((d) => d.status === "OPTIMAL_VERIFIED");
+  document.getElementById("statScore").textContent = verified.length + " / " + DATA.length;
+  const times = verified.map((d) => d.time).sort((a, b) => a - b);
+  const median = times[Math.floor(times.length / 2)];
+  document.getElementById("statMedian").textContent = fmtTime(median);
+  document.getElementById("statSlowest").textContent = fmtTime(times[times.length - 1]);
+  document.getElementById("statFastest").textContent = fmtTime(times[0]);
+
+  const counts = {};
+  DATA.forEach((d) => { counts[d.status] = (counts[d.status] || 0) + 1; });
+  const breakdown = document.getElementById("breakdown");
+  Object.keys(counts).sort((a, b) => counts[b] - counts[a]).forEach((status) => {
+    const cls = STATUS_CLASS[status] || "warn";
+    const chip = document.createElement("span");
+    chip.className = "chip " + cls;
+    chip.innerHTML = `<span class="dot"></span>${STATUS_LABEL[status] || status}: ${counts[status]}`;
+    breakdown.appendChild(chip);
+  });
+
+  // ---- Bar list + table ----
+  const barList = document.getElementById("barList");
+  const tableBody = document.getElementById("tableBody");
+  const tooltip = document.getElementById("tooltip");
+  let currentFilter = "all";
+  let currentSort = "time-desc";
+
+  const maxLogTime = Math.log10(60);
+  const minLogTime = Math.log10(0.001);
+
+  function barWidthPct(t) {
+    const clamped = Math.max(0.001, t);
+    const frac = (Math.log10(clamped) - minLogTime) / (maxLogTime - minLogTime);
+    return Math.max(1, Math.min(100, frac * 100));
+  }
+
+  function render() {
+    let rows = DATA.filter((d) => currentFilter === "all" || d.status === currentFilter);
+    if (currentSort === "time-desc") rows = rows.slice().sort((a, b) => b.time - a.time);
+    else if (currentSort === "time-asc") rows = rows.slice().sort((a, b) => a.time - b.time);
+    else rows = rows.slice().sort((a, b) => a.name.localeCompare(b.name));
+
+    barList.innerHTML = "";
+    tableBody.innerHTML = "";
+    rows.forEach((d) => {
+      const cls = STATUS_CLASS[d.status] || "warn";
+      const row = document.createElement("div");
+      row.className = "bar-row";
+      row.innerHTML = `
+        <span class="nm">${d.name}</span>
+        <span class="bar-track"><span class="bar-fill ${cls}" style="width:${barWidthPct(d.time)}%"></span></span>
+        <span class="t">${fmtTime(d.time)}</span>`;
+      row.addEventListener("mousemove", (e) => showTooltip(e, d));
+      row.addEventListener("mouseleave", hideTooltip);
+      barList.appendChild(row);
+
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="nm">${d.name}</td>
+        <td>${STATUS_LABEL[d.status] || d.status}</td>
+        <td class="num">${fmtObj(d.obj)}</td>
+        <td class="num">${d.time.toFixed(3)}</td>
+        <td class="num">${fmtPrimal(d.primal)}</td>`;
+      tableBody.appendChild(tr);
+    });
+  }
+
+  function showTooltip(e, d) {
+    tooltip.innerHTML = `
+      <div class="row"><span class="k2">status</span><span>${STATUS_LABEL[d.status] || d.status}</span></div>
+      <div class="row"><span class="k2">objective</span><span>${fmtObj(d.obj)}</span></div>
+      <div class="row"><span class="k2">time</span><span>${d.time.toFixed(3)}s</span></div>
+      <div class="row"><span class="k2">primal residual</span><span>${fmtPrimal(d.primal)}</span></div>`;
+    tooltip.style.left = Math.min(e.clientX + 14, window.innerWidth - 300) + "px";
+    tooltip.style.top = Math.max(e.clientY - 10, 10) + "px";
+    tooltip.classList.add("show");
+  }
+  function hideTooltip() { tooltip.classList.remove("show"); }
+
+  document.querySelectorAll(".filter-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentFilter = btn.dataset.filter;
+      render();
+    });
+  });
+  document.getElementById("sortSelect").addEventListener("change", (e) => {
+    currentSort = e.target.value;
+    render();
+  });
+
+  render();
+})();
+</script>
