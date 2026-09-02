@@ -67,6 +67,15 @@ struct Solution {
   std::vector<double> reduced_cost;  // size num_cols
   double objective_value = 0.0;
   int iterations = 0;
+
+  // The optimal basis: basis[i] is the variable index occupying basis slot
+  // i (0..num_cols-1 for a structural column, num_cols..num_cols+num_rows-1
+  // for slack row i's column), size num_rows. Only set when status ==
+  // kOptimal; empty otherwise. Exists so downstream consumers (la/ tests,
+  // eventually the real revised simplex) can reconstruct the real basis
+  // matrix a solve actually produced, instead of only ever exercising
+  // synthetic ones.
+  std::vector<int> basis;
 };
 
 }  // namespace inferno::core

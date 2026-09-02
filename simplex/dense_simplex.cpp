@@ -423,6 +423,8 @@ core::Solution SolveDense(const core::LpProblem& problem, int max_iterations,
   solution.x.assign(problem.num_cols, 0.0);
   for (int j = 0; j < problem.num_cols; ++j) solution.x[j] = ws.value[j];
 
+  solution.basis = ws.basis;
+
   solution.row_activity.assign(problem.num_rows, 0.0);
   for (int i = 0; i < problem.num_rows; ++i) solution.row_activity[i] = ws.value[problem.num_cols + i];
 

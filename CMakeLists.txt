@@ -18,6 +18,11 @@ add_library(inferno_core
   io/solution_writer.cpp
   checker/checker.cpp
   simplex/dense_simplex.cpp
+  la/scaling.cpp
+  la/lu_factors.cpp
+  la/markowitz_lu.cpp
+  la/lu_solve.cpp
+  la/basis_factorization.cpp
 )
 target_include_directories(inferno_core PUBLIC ${CMAKE_SOURCE_DIR})
 
