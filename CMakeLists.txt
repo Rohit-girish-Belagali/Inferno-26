@@ -19,6 +19,7 @@ add_library(inferno_core
   checker/checker.cpp
   simplex/dense_simplex.cpp
   simplex/revised_simplex.cpp
+  presolve/presolve.cpp
   la/scaling.cpp
   la/lu_factors.cpp
   la/markowitz_lu.cpp
