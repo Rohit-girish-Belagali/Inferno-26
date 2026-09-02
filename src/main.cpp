@@ -10,17 +10,23 @@
 #include "simplex/dense_simplex.hpp"
 #include "simplex/dual_simplex.hpp"
 #include "simplex/revised_simplex.hpp"
+#include "simplex/solve_manager.hpp"
 
 namespace {
 
 void PrintUsage(const char* argv0) {
   std::cerr << "usage: " << argv0
-            << " <problem.mps> [--solution out.sol] [--solver revised|dense|dual] [--presolve]\n"
+            << " <problem.mps> [--solution out.sol] [--solver revised|dense|dual|managed] "
+               "[--presolve]\n"
                "  --solver revised   (default) sparse LU + Gilbert-Peierls FTRAN/BTRAN + PFI update\n"
                "  --solver dense     Phase 1.1 throwaway dense tableau, kept for comparison\n"
                "  --solver dual      bounded-variable dual simplex; only when a trivial "
                "dual-feasible start exists (see simplex/dual_simplex.hpp) — reports "
                "NUMERICAL_ERROR otherwise rather than a general dual phase 1\n"
+               "  --solver managed   the \"concurrent solve manager\": tries dual, checker-\n"
+               "                     verifies it, falls back to revised otherwise — see\n"
+               "                     simplex/solve_manager.hpp for why this is a fallback\n"
+               "                     chain, not real concurrency, for now\n"
                "  --presolve         fixed-variable + empty-column removal before solving "
                "(opt-in; only --solver revised uses it)\n";
 }
@@ -47,7 +53,8 @@ int main(int argc, char** argv) {
       use_presolve = true;
     }
   }
-  if (solver_name != "revised" && solver_name != "dense" && solver_name != "dual") {
+  if (solver_name != "revised" && solver_name != "dense" && solver_name != "dual" &&
+      solver_name != "managed") {
     PrintUsage(argv[0]);
     return 2;
   }
@@ -63,6 +70,7 @@ int main(int argc, char** argv) {
   auto start = std::chrono::steady_clock::now();
 
   inferno::core::Solution solution;
+  std::string winner;
   if (use_presolve && solver_name == "revised") {
     auto pre = inferno::presolve::Presolve(problem);
     if (pre.infeasible) {
@@ -75,6 +83,10 @@ int main(int argc, char** argv) {
     solution = inferno::simplex::SolveDense(problem);
   } else if (solver_name == "dual") {
     solution = inferno::simplex::SolveDual(problem);
+  } else if (solver_name == "managed") {
+    auto managed = inferno::simplex::SolveManaged(problem);
+    solution = managed.solution;
+    winner = managed.winner;
   } else {
     solution = inferno::simplex::SolveRevised(problem);
   }
@@ -83,6 +95,7 @@ int main(int argc, char** argv) {
   double elapsed_s = std::chrono::duration<double>(end - start).count();
 
   std::cout << problem.name << " solver=" << solver_name << (use_presolve ? "+presolve" : "")
+            << (winner.empty() ? "" : " winner=" + winner)
             << " status=" << inferno::io::StatusToString(solution.status)
             << " objective=" << solution.objective_value << " iterations=" << solution.iterations
             << " time=" << elapsed_s << "s\n";

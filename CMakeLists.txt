@@ -20,6 +20,7 @@ add_library(inferno_core
   simplex/dense_simplex.cpp
   simplex/revised_simplex.cpp
   simplex/dual_simplex.cpp
+  simplex/solve_manager.cpp
   presolve/presolve.cpp
   la/scaling.cpp
   la/lu_factors.cpp
