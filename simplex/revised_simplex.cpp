@@ -146,7 +146,41 @@ struct Workspace {
   // repaired (valid, factorizable) basis rather than reporting a failure
   // that is really just "the point moved".
   bool repaired = false;
+
+  // Row-major (CSR) view of A, built once per solve. The Devex weight
+  // update needs the pivot ROW of the tableau against every nonbasic
+  // column, which is a row-oriented question; answering it column-by-
+  // column against the CSC matrix meant touching every nonzero in the
+  // problem on every single pivot. See the update block for the rest.
+  std::vector<int> row_ptr;
+  std::vector<int> row_cols;
+  std::vector<double> row_vals;
+  // Scatter accumulator for that update, size n, held at all-zero between
+  // pivots so it never needs an O(n) clear — only the entries actually
+  // touched are reset, and `touched` records exactly which those are.
+  std::vector<double> alpha_row;
+  std::vector<int> touched;
 };
+
+// Builds the row-major view in `ws` from the problem's CSC matrix.
+void BuildRowView(Workspace& ws, const core::LpProblem& problem) {
+  int nnz = problem.a.nnz();
+  ws.row_ptr.assign(ws.m + 1, 0);
+  for (int p = 0; p < nnz; ++p) ++ws.row_ptr[problem.a.row_idx[p] + 1];
+  for (int i = 0; i < ws.m; ++i) ws.row_ptr[i + 1] += ws.row_ptr[i];
+  ws.row_cols.resize(nnz);
+  ws.row_vals.resize(nnz);
+  std::vector<int> pos(ws.row_ptr.begin(), ws.row_ptr.end() - 1);
+  for (int j = 0; j < problem.num_cols; ++j) {
+    for (int p = problem.a.col_ptr[j]; p < problem.a.col_ptr[j + 1]; ++p) {
+      int dst = pos[problem.a.row_idx[p]]++;
+      ws.row_cols[dst] = j;
+      ws.row_vals[dst] = problem.a.values[p];
+    }
+  }
+  ws.alpha_row.assign(ws.n, 0.0);
+  ws.touched.clear();
+}
 
 // Recomputes every basic variable's value from scratch via one FTRAN call,
 // replacing whatever the incremental per-pivot updates had accumulated.
@@ -472,14 +506,40 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
         double alpha_rq = alpha[leaving_slot];
         std::vector<double> rho = ws.bf.Btran({{leaving_slot, 1.0}});
         double w_q = ws.devex_weight[entering];
-        for (int j = 0; j < ws.n; ++j) {
+
+        // alpha_r (the pivot row of the tableau) = rho^T M. Computed by
+        // scattering rho's NONZEROS through the row-major view rather
+        // than dotting each of the n columns against a dense rho: rho is
+        // one BTRAN of a unit vector and in practice is very sparse, so
+        // this touches only the nonzeros of the rows rho actually hits
+        // instead of every nonzero in the problem, every pivot. The
+        // previous form also built a fresh std::vector per column via
+        // ColumnOf — a heap allocation per nonbasic column per pivot,
+        // which profiling showed dominating the entire solve. Same
+        // arithmetic, same result; only the loop order changed.
+        for (int r = 0; r < ws.m; ++r) {
+          double rho_r = rho[r];
+          if (rho_r == 0.0) continue;
+          for (int p = ws.row_ptr[r]; p < ws.row_ptr[r + 1]; ++p) {
+            int j = ws.row_cols[p];
+            if (ws.alpha_row[j] == 0.0) ws.touched.push_back(j);
+            ws.alpha_row[j] += rho_r * ws.row_vals[p];
+          }
+          // Slack column for row r is -e_r, so its entry is just -rho[r].
+          int slack = problem.num_cols + r;
+          if (ws.alpha_row[slack] == 0.0) ws.touched.push_back(slack);
+          ws.alpha_row[slack] -= rho_r;
+        }
+
+        for (int j : ws.touched) {
+          double alpha_rj = ws.alpha_row[j];
+          ws.alpha_row[j] = 0.0;  // leave the scratch all-zero for the next pivot
+          if (alpha_rj == 0.0) continue;  // also covers a duplicate `touched` entry
           if (j == entering || ws.basis_slot_of[j] != -1) continue;
-          double alpha_rj = 0.0;
-          for (const auto& [row, val] : ColumnOf(problem, j)) alpha_rj += rho[row] * val;
-          if (alpha_rj == 0.0) continue;
           double candidate = (alpha_rj / alpha_rq) * (alpha_rj / alpha_rq) * w_q;
           if (candidate > ws.devex_weight[j]) ws.devex_weight[j] = candidate;
         }
+        ws.touched.clear();
         ws.devex_weight[leaving_var] = std::max(w_q / (alpha_rq * alpha_rq), 1.0);
       }
 
@@ -529,6 +589,7 @@ core::Solution SolveRevisedCore(const core::LpProblem& problem, int max_iteratio
   ws.basis.resize(ws.m);
   ws.basis_slot_of.assign(ws.n, -1);
   ws.devex_weight.assign(ws.n, 1.0);
+  BuildRowView(ws, problem);
 
   for (int j = 0; j < problem.num_cols; ++j) {
     ws.lo[j] = problem.col_lo[j];
