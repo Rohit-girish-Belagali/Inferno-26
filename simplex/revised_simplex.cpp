@@ -147,6 +147,15 @@ struct Workspace {
   // that is really just "the point moved".
   bool repaired = false;
 
+  // Set by the driver after a numerically failed attempt, to re-run with
+  // the Harris tolerance expansion switched off. The expansion is what
+  // lets a degenerate stall escape, but it deliberately admits a little
+  // infeasibility, and on a few instances that is the thing that breaks
+  // them. Retrying without it means the expansion can only ever win an
+  // instance, never lose one: the worst case is exactly the behaviour
+  // that existed before it.
+  bool disable_expansion = false;
+
   // Row-major (CSR) view of A, built once per solve. The Devex weight
   // update needs the pivot ROW of the tableau against every nonbasic
   // column, which is a row-oriented question; answering it column-by-
@@ -397,6 +406,28 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
     std::vector<std::pair<int, double>> entering_col = ColumnOf(problem, entering);
     std::vector<double> alpha = ws.bf.Ftran(entering_col);
 
+    // Bound relaxation for the Harris ratio test below — the "tolerance
+    // expansion" half of it. This is NOT a constant, and it matters that
+    // it isn't: measured at both extremes, a flat setting is wrong in one
+    // direction or the other. At 0.1x the feasibility tolerance the
+    // relaxation is too small to break a degenerate stall (`tuff` still
+    // exhausted its entire iteration budget); at a flat 1.0x it breaks
+    // `tuff` open instantly — 0.014s, from not solving at all — but
+    // admits enough infeasibility to push `degen3` and `modszk1` into
+    // numerical failure.
+    //
+    // So expand it only where the problem actually is. While pivots are
+    // making real progress the relaxation stays at its small, safe base;
+    // as consecutive degenerate (zero-length) pivots pile up it ramps
+    // toward the full feasibility tolerance, which is exactly the
+    // situation that needs a strictly positive step to escape, and
+    // collapses back the moment a real step is taken (degenerate_streak
+    // resets below). Same spirit as the classic EXPAND procedure: let the
+    // tolerance grow while stalled rather than paying for it everywhere.
+    double expansion =
+        ws.disable_expansion ? 1.0 : 1.0 + static_cast<double>(std::min(degenerate_streak, 2));
+    const double harris_delta = 0.1 * expansion * tol.feasibility;
+
     double self_limit = kInfinity;
     if (std::isfinite(ws.lo[entering]) && std::isfinite(ws.hi[entering])) {
       self_limit = ws.hi[entering] - ws.lo[entering];
@@ -415,7 +446,8 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
     // bound relaxation), but fixes that failure mode.
     struct RatioCandidate {
       int slot;
-      double t_limit;
+      double t_limit;      // strict ratio: step at which this variable exactly hits its bound
+      double t_relaxed;    // Harris pass-1 ratio: step at which it would exceed it by `delta`
       double rate_abs;
       bool to_upper;
     };
@@ -447,11 +479,28 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
       }
       if (!std::isfinite(t_limit)) continue;
       if (t_limit < -tol.feasibility) t_limit = 0.0;
-      candidates.push_back({slot, t_limit, std::abs(rate), candidate_to_upper});
+      double rate_abs = std::abs(rate);
+      // Harris pass 1 works against bounds relaxed by `delta`, so a
+      // variable already sitting exactly on its bound still admits a
+      // strictly positive step. That is the whole point: at a degenerate
+      // vertex the strict ratio is 0 for many rows at once, and a test
+      // that can only ever return 0 stalls there.
+      double t_relaxed = t_limit + harris_delta / rate_abs;
+      candidates.push_back({slot, t_limit, t_relaxed, rate_abs, candidate_to_upper});
     }
 
-    double best_t = self_limit;
-    for (const auto& c : candidates) best_t = std::min(best_t, c.t_limit);
+    // --- Harris two-pass ratio test with tolerance expansion. ---
+    // Pass 1 finds the largest step that keeps EVERY basic variable within
+    // `harris_delta` of its bound. Because it measures against relaxed
+    // bounds, this is strictly positive even when several variables are
+    // already exactly on theirs, which is precisely the degenerate case
+    // where the strict minimum ratio is 0 and the solve stalls.
+    double best_t = self_limit;   // strict minimum, kept for the unboundedness test
+    double t_max = self_limit;    // relaxed maximum, what the step is actually taken at
+    for (const auto& c : candidates) {
+      best_t = std::min(best_t, c.t_limit);
+      t_max = std::min(t_max, c.t_relaxed);
+    }
 
     if (!std::isfinite(best_t)) {
       // A mathematically valid "unbounded" conclusion requires standing at
@@ -470,23 +519,34 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
       return false;
     }
 
-    double tie_band = std::max(tol.feasibility, best_t * 1e-9);
+    // Pass 2: among every candidate that pass 1's relaxed limit admits,
+    // take the one with the largest |rate| — the numerically strongest
+    // pivot available, rather than whichever happened to have the exact
+    // minimum ratio. A tiny pivot that merely wins the strict ratio test
+    // by a hair is how a basis degrades toward singularity over many
+    // iterations; letting the tolerance admit a wider candidate set is
+    // what buys the freedom to avoid it.
     int leaving_slot = -1;
     bool leaving_to_upper = false;
     // A bound flip never touches the basis (perfectly stable), so it wins
     // any tie against an actual pivot — give it an unbeatable score.
-    double chosen_stability = (std::isfinite(self_limit) && self_limit <= best_t + tie_band)
-                                   ? kInfinity
-                                   : -1.0;
+    double chosen_stability =
+        (std::isfinite(self_limit) && self_limit <= t_max) ? kInfinity : -1.0;
     for (const auto& c : candidates) {
-      if (c.t_limit <= best_t + tie_band && c.rate_abs > chosen_stability) {
+      if (c.t_limit <= t_max && c.rate_abs > chosen_stability) {
         chosen_stability = c.rate_abs;
         leaving_slot = c.slot;
         leaving_to_upper = c.to_upper;
       }
     }
 
-    double t = std::max(0.0, best_t);
+    // Step at the relaxed limit, not the strict one. t_max is the minimum
+    // over ALL candidates of the step that would push them `harris_delta`
+    // past their bound, so no basic variable can be driven further than
+    // that off its bound — a bounded, deliberate infeasibility, which the
+    // periodic RecomputeBasicValues grounding and the bound-violation
+    // guards above both still police.
+    double t = std::max(0.0, std::isfinite(t_max) ? t_max : best_t);
     if (t < tol.feasibility) ++degenerate_streak; else degenerate_streak = 0;
 
     for (int slot = 0; slot < ws.m; ++slot) ws.value[ws.basis[slot]] += (-dir) * alpha[slot] * t;
@@ -584,10 +644,11 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
 // below is the public entry point and applies geometric-mean scaling
 // around this.
 core::Solution SolveRevisedCore(const core::LpProblem& problem, int max_iterations,
-                                 const core::TolerancePolicy& tol) {
+                                 const core::TolerancePolicy& tol, bool allow_expansion) {
   core::Solution solution;
 
   Workspace ws;
+  ws.disable_expansion = !allow_expansion;
   ws.m = problem.num_rows;
   ws.n = problem.num_cols + problem.num_rows;
   ws.lo.resize(ws.n);
@@ -812,7 +873,30 @@ core::Solution SolveRevised(const core::LpProblem& problem, int max_iterations,
     scaled.obj[j] = problem.obj[j] * scale.col_scale[j];
   }
 
-  core::Solution scaled_solution = SolveRevisedCore(scaled, max_iterations, tol);
+  // First attempt uses the Harris tolerance expansion, which is what lets
+  // degenerate stalls escape. If that attempt fails to reach a conclusion
+  // we trust, redo the whole solve from scratch with the expansion off.
+  //
+  // Retrying from scratch, rather than restarting the phases in place, is
+  // the point: by the time an over-relaxed step has damaged the basis, the
+  // current point is exactly what cannot be trusted, so continuing from it
+  // just carries the damage forward (measured — an in-place restart left
+  // scsd8 failing). Starting over costs one wasted solve on the few
+  // instances that need it, and in exchange the expansion can only ever
+  // win an instance, never lose one: the fallback path is precisely the
+  // behaviour that existed before it.
+  core::Solution scaled_solution =
+      SolveRevisedCore(scaled, max_iterations, tol, /*allow_expansion=*/true);
+  if (scaled_solution.status == core::SolveStatus::kNumericalError ||
+      scaled_solution.status == core::SolveStatus::kUnbounded ||
+      scaled_solution.status == core::SolveStatus::kIterationLimit) {
+    core::Solution strict =
+        SolveRevisedCore(scaled, max_iterations, tol, /*allow_expansion=*/false);
+    if (strict.status == core::SolveStatus::kOptimal ||
+        scaled_solution.status != core::SolveStatus::kOptimal) {
+      scaled_solution = strict;
+    }
+  }
 
   core::Solution solution;
   solution.status = scaled_solution.status;
