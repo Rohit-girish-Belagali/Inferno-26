@@ -193,11 +193,20 @@ void BuildRowView(Workspace& ws, const core::LpProblem& problem) {
 // rather than trusting incremental drift indefinitely.
 void RecomputeBasicValues(Workspace& ws, const core::LpProblem& problem) {
   std::vector<double> mx(ws.m, 0.0);
+  // Walks the CSC arrays directly rather than through ColumnOf, which
+  // returns a fresh std::vector by value — one heap allocation per
+  // nonbasic column, every refactorization. Same traversal, no allocation.
   for (int j = 0; j < ws.n; ++j) {
     if (ws.basis_slot_of[j] != -1) continue;
     double xj = ws.value[j];
     if (xj == 0.0) continue;
-    for (const auto& [row, val] : ColumnOf(problem, j)) mx[row] += val * xj;
+    if (j < problem.num_cols) {
+      for (int p = problem.a.col_ptr[j]; p < problem.a.col_ptr[j + 1]; ++p) {
+        mx[problem.a.row_idx[p]] += problem.a.values[p] * xj;
+      }
+    } else {
+      mx[j - problem.num_cols] -= xj;  // slack column is -e_row
+    }
   }
   std::vector<std::pair<int, double>> rhs_sparse;
   for (int row = 0; row < ws.m; ++row) {
