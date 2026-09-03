@@ -136,7 +136,7 @@ bool BasisFactorization::ShouldRefactorize() const {
   // Numerical safety does not rest on this number: the growth monitor
   // below still forces a refactorization whenever the eta chain actually
   // becomes unstable, independent of how long it is.
-  int cap = lu_.m / 10;
+  int cap = lu_.m / 20;
   if (cap < 50) cap = 50;
   if (cap > 250) cap = 250;
   if (static_cast<int>(etas_.size()) >= cap) return true;

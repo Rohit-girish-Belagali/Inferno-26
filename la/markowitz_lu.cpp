@@ -65,42 +65,58 @@ bool FactorizeMarkowitz(const core::CscMatrix& b, const MarkowitzOptions& opts,
   std::vector<std::vector<std::pair<int, double>>> u_row_orig(m);
   std::vector<double> diag_orig(m, 0.0);  // keyed by k directly (pivot found this step)
 
+  std::vector<std::vector<int>> bucket(m + 2);
+  for (int c = 0; c < m; ++c) {
+    size_t sz = active_col[c].size();
+    if (sz < bucket.size()) bucket[sz].push_back(c);
+  }
+  auto refile = [&](int c) {
+    if (!col_active[c]) return;
+    size_t sz = active_col[c].size();
+    if (sz < bucket.size()) bucket[sz].push_back(c);
+  };
+  constexpr int kMaxColumnsExamined = 64;
+
   for (int k = 0; k < m; ++k) {
-    // --- Pivot search: minimum Markowitz count among threshold-stable
-    // candidates, scanning every still-active column. ---
     int best_c = -1, best_r = -1;
     long long best_count = -1;
 
-    for (int c = 0; c < m; ++c) {
-      if (!col_active[c]) continue;
+    auto evaluate = [&](int c) -> bool {
       const auto& colmap = active_col[c];
-      if (colmap.empty()) {  // structurally singular
-        RecordSingularity(info, col_active, row_step, m);
-        return false;
-      }
-
+      if (colmap.empty()) return false;
       double max_abs = 0.0;
       for (const auto& [r, v] : colmap) max_abs = std::max(max_abs, std::abs(v));
-      if (max_abs <= 0.0) {
-        RecordSingularity(info, col_active, row_step, m);
-        return false;
-      }
-
+      if (max_abs <= 0.0) return false;
       for (const auto& [r, v] : colmap) {
         if (std::abs(v) < opts.pivot_threshold * max_abs) continue;
         long long count = static_cast<long long>(colmap.size() - 1) *
                            static_cast<long long>(active_row[r].size() - 1);
         if (best_c == -1 || count < best_count) {
-          best_count = count;
-          best_c = c;
-          best_r = r;
+          best_count = count; best_c = c; best_r = r;
         }
       }
+      return true;
+    };
+
+    int examined = 0;
+    for (size_t cnt = 0; cnt < bucket.size() && examined < kMaxColumnsExamined; ++cnt) {
+      auto& b = bucket[cnt];
+      size_t idx = 0;
+      while (idx < b.size() && examined < kMaxColumnsExamined) {
+        int c = b[idx];
+        if (!col_active[c] || active_col[c].size() != cnt) { b[idx] = b.back(); b.pop_back(); continue; }
+        if (!evaluate(c)) { RecordSingularity(info, col_active, row_step, m); return false; }
+        ++examined; ++idx;
+      }
+      if (best_count == 0) break;
     }
     if (best_c == -1) {
-      RecordSingularity(info, col_active, row_step, m);
-      return false;
+      for (int c = 0; c < m; ++c) {
+        if (!col_active[c]) continue;
+        if (!evaluate(c)) { RecordSingularity(info, col_active, row_step, m); return false; }
+      }
     }
+    if (best_c == -1) { RecordSingularity(info, col_active, row_step, m); return false; }
 
     int c = best_c, r = best_r;
     double piv = active_col[c].at(r);
@@ -138,12 +154,15 @@ bool FactorizeMarkowitz(const core::CscMatrix& b, const MarkowitzOptions& opts,
         // empty: FactorizeMarkowitz then reports the matrix singular when
         // it isn't. Relative-to-operands only catches true cancellation.
         double scale = std::max({std::abs(existing), std::abs(subtrahend), 1.0});
+        bool had = (it != col_cp.end());
         if (std::abs(updated) < 1e-14 * scale) {
-          if (it != col_cp.end()) col_cp.erase(it);
+          if (had) col_cp.erase(it);
           active_row[i].erase(cp);
+          if (had) refile(cp);
         } else {
           col_cp[i] = updated;
           active_row[i][cp] = updated;
+          if (!had) refile(cp);
         }
       }
       active_col[c].erase(i);
@@ -160,7 +179,10 @@ bool FactorizeMarkowitz(const core::CscMatrix& b, const MarkowitzOptions& opts,
     }
 
     // Retire row r and column c from the active matrix.
-    for (const auto& [cp, val] : pivot_row_entries) active_col[cp].erase(r);
+    for (const auto& [cp, val] : pivot_row_entries) {
+      active_col[cp].erase(r);
+      if (cp != c) refile(cp);
+    }
     active_row[r].clear();
     active_col[c].clear();
     col_active[c] = 0;
