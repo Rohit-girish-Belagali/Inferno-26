@@ -40,6 +40,21 @@
 
 ---
 
+## Known issue for whoever picks this up
+
+`la_test` is intermittently red, and the cause is understood: it asserts a
+**wall-clock ratio** (basis update at least 20x faster than a fresh
+refactorization) inside a unit test. Measured on an idle machine it lands at
+26–32x, so the margin is real — but running it while a full Netlib bench is
+going pushes it under the 20x floor and the suite fails. Every observed
+failure was that test, under exactly those conditions, and it passes on
+re-run. It is a test-design problem (a performance assertion in a
+correctness suite), not a solver regression: re-run `ctest` on a quiet
+machine before believing a red result, and consider making that assertion
+either load-tolerant or a separate benchmark target.
+
+---
+
 ## Bottom Line
 
 Solid on Phase 1 (both gates cleared honestly). Phase 2 has real, working substance but is short of its own checkpoint — the plan itself says a missed day-25 checkpoint should trigger narrowing scope to "LP + GPU path + refinery models" rather than continuing to chase MILP. This session moved Phase 2.1+2.2's combined score from 77/93 to 91/93 (zero checker-rejected claims throughout every change, verified against the full Netlib set at each step, not just spot-checked) and — more significant than the count — eliminated the `NUMERICAL_ERROR` category entirely, so the solver no longer abandons any instance with an error. Everything still unsolved is a speed/iteration-budget problem, which is a far better position to attack the 98/98 gate from than a robustness one. Two attempted additions (general bound tightening, duplicate-column merging) were found unsound-to-ship and honestly reverted rather than pushed through. Phases 3–5 are essentially untouched. Ahead of a typical day-2 pace content-wise, but not yet past its own first real gate.
