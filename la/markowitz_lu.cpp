@@ -7,8 +7,29 @@
 
 namespace inferno::la {
 
+namespace {
+
+// Records which columns had no usable pivot and which rows were left
+// uncovered, so the caller can repair the basis instead of giving up.
+// `col_active` still marks every not-yet-pivoted column at the point of
+// failure; `row_step` is -1 for every not-yet-pivoted row.
+void RecordSingularity(SingularityInfo* info, const std::vector<char>& col_active,
+                        const std::vector<int>& row_step, int m) {
+  if (info == nullptr) return;
+  info->unpivoted_cols.clear();
+  info->unpivoted_rows.clear();
+  for (int c = 0; c < m; ++c) {
+    if (col_active[c]) info->unpivoted_cols.push_back(c);
+  }
+  for (int r = 0; r < m; ++r) {
+    if (row_step[r] == -1) info->unpivoted_rows.push_back(r);
+  }
+}
+
+}  // namespace
+
 bool FactorizeMarkowitz(const core::CscMatrix& b, const MarkowitzOptions& opts,
-                         double singularity_tol, LuFactors& out) {
+                         double singularity_tol, LuFactors& out, SingularityInfo* info) {
   int m = b.rows;
   if (b.cols != m) return false;
   if (m == 0) {
@@ -53,11 +74,17 @@ bool FactorizeMarkowitz(const core::CscMatrix& b, const MarkowitzOptions& opts,
     for (int c = 0; c < m; ++c) {
       if (!col_active[c]) continue;
       const auto& colmap = active_col[c];
-      if (colmap.empty()) return false;  // structurally singular
+      if (colmap.empty()) {  // structurally singular
+        RecordSingularity(info, col_active, row_step, m);
+        return false;
+      }
 
       double max_abs = 0.0;
       for (const auto& [r, v] : colmap) max_abs = std::max(max_abs, std::abs(v));
-      if (max_abs <= 0.0) return false;
+      if (max_abs <= 0.0) {
+        RecordSingularity(info, col_active, row_step, m);
+        return false;
+      }
 
       for (const auto& [r, v] : colmap) {
         if (std::abs(v) < opts.pivot_threshold * max_abs) continue;
@@ -70,11 +97,17 @@ bool FactorizeMarkowitz(const core::CscMatrix& b, const MarkowitzOptions& opts,
         }
       }
     }
-    if (best_c == -1) return false;
+    if (best_c == -1) {
+      RecordSingularity(info, col_active, row_step, m);
+      return false;
+    }
 
     int c = best_c, r = best_r;
     double piv = active_col[c].at(r);
-    if (std::abs(piv) < singularity_tol) return false;
+    if (std::abs(piv) < singularity_tol) {
+      RecordSingularity(info, col_active, row_step, m);
+      return false;
+    }
 
     // Snapshot state needed for this step before mutating it.
     std::vector<std::pair<int, double>> pivot_row_entries(active_row[r].begin(), active_row[r].end());

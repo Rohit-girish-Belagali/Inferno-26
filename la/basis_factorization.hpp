@@ -33,9 +33,13 @@ namespace inferno::la {
 class BasisFactorization {
  public:
   // Factorizes `b` fresh, discarding any existing eta chain. Returns false
-  // (state left unusable — call again before using) if singular.
+  // (state left unusable — call again before using) if singular. When
+  // `info` is non-null it is populated on failure with exactly which
+  // columns had no acceptable pivot and which rows were left uncovered,
+  // so the caller can repair the basis rather than abandon the solve —
+  // see SingularityInfo in la/markowitz_lu.hpp.
   bool Factorize(const core::CscMatrix& b, const MarkowitzOptions& opts,
-                 const core::TolerancePolicy& tol);
+                 const core::TolerancePolicy& tol, SingularityInfo* info = nullptr);
 
   // Solves B x = b for the *current* (post-update) basis B. `b` is sparse,
   // original row-index pairs; returns dense x, original column-index space.

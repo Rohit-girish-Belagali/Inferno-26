@@ -1,9 +1,26 @@
 #pragma once
 
+#include <vector>
+
 #include "core/sparse.hpp"
 #include "la/lu_factors.hpp"
 
 namespace inferno::la {
+
+// Filled in by FactorizeMarkowitz when it fails: exactly which columns it
+// could not find an acceptable pivot for, and which rows were therefore
+// left uncovered. Both lists have the same length (one unpivoted row per
+// unpivoted column), which is what makes singularity REPAIR possible:
+// swapping each unpivoted column for the unit column of an unpivoted row
+// yields a basis that is guaranteed nonsingular, because the already-
+// pivoted part is triangularizable by construction and the replacements
+// cover precisely the missing rows. Production simplex codes all do some
+// version of this rather than aborting the solve — see
+// simplex/revised_simplex.cpp's RepairSingularBasis.
+struct SingularityInfo {
+  std::vector<int> unpivoted_cols;
+  std::vector<int> unpivoted_rows;
+};
 
 struct MarkowitzOptions {
   // Threshold partial pivoting stability factor τ ∈ (0, 1]: a candidate
@@ -33,7 +50,11 @@ struct MarkowitzOptions {
 // amortized cost a production implementation would target. Acceptable for
 // Phase 1.2's correctness gate; revisit if it becomes the bottleneck once
 // wired into the real simplex in Phase 2.
+// `info`, when non-null, is populated on failure with the columns that had
+// no acceptable pivot and the rows left uncovered (see SingularityInfo).
+// It is left untouched on success.
 bool FactorizeMarkowitz(const core::CscMatrix& b, const MarkowitzOptions& opts,
-                         double singularity_tol, LuFactors& out);
+                         double singularity_tol, LuFactors& out,
+                         SingularityInfo* info = nullptr);
 
 }  // namespace inferno::la

@@ -8,9 +8,9 @@
 namespace inferno::la {
 
 bool BasisFactorization::Factorize(const core::CscMatrix& b, const MarkowitzOptions& opts,
-                                    const core::TolerancePolicy& tol) {
+                                    const core::TolerancePolicy& tol, SingularityInfo* info) {
   LuFactors fresh;
-  if (!FactorizeMarkowitz(b, opts, tol.pivot, fresh)) return false;
+  if (!FactorizeMarkowitz(b, opts, tol.pivot, fresh, info)) return false;
   lu_ = std::move(fresh);
   etas_.clear();
   growth_ = 1.0;

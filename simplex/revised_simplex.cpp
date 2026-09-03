@@ -138,6 +138,14 @@ struct Workspace {
   std::vector<double> value;  // current value of every variable
   la::BasisFactorization bf;
   std::vector<double> devex_weight;  // Devex reference weights, meaningful for nonbasic j only
+  // Set by RepairSingularBasis. A repair swaps basic columns for slacks,
+  // which MOVES the current point — legitimately, but phase 2 assumes it
+  // starts from the feasible point phase 1 handed it, and has no machinery
+  // to restore feasibility if a mid-phase-2 repair destroys it. The driver
+  // below watches this flag and restarts the two-phase sequence from the
+  // repaired (valid, factorizable) basis rather than reporting a failure
+  // that is really just "the point moved".
+  bool repaired = false;
 };
 
 // Recomputes every basic variable's value from scratch via one FTRAN call,
@@ -163,6 +171,62 @@ void RecomputeBasicValues(Workspace& ws, const core::LpProblem& problem) {
   }
   std::vector<double> xb = ws.bf.Ftran(rhs_sparse);
   for (int slot = 0; slot < ws.m; ++slot) ws.value[ws.basis[slot]] = xb[slot];
+}
+
+// Singularity repair. When refactorizing the current basis fails, the LU
+// reports exactly which basis columns it could not pivot and which rows
+// were left uncovered (la::SingularityInfo). Swapping each of those
+// columns for the slack of an uncovered row yields a basis that is
+// guaranteed nonsingular: the part the LU already pivoted is
+// triangularizable by construction, and the unit replacement columns
+// cover precisely the missing rows.
+//
+// This matters because a failed refactorization was, until now, the END
+// of the solve — all three of this project's remaining NUMERICAL_ERROR
+// instances (scsd1, scsd8, pilot87) died at exactly this one line, mid-
+// solve, after thousands of otherwise-fine iterations. Repairing and
+// continuing is what production simplex codes do; abandoning a solve
+// because ONE basis went singular throws away all the work done so far
+// for no good reason. Correctness is unaffected either way: the repaired
+// basis is just a different starting point, and phase 1 / phase 2 still
+// prove feasibility and optimality from scratch, with the independent
+// checker having the final say regardless.
+//
+// A displaced basic variable becomes nonbasic at one of its own bounds
+// (or at 0 if free). Returns false only if a needed slack is somehow
+// already basic — in principle unreachable, since a basic slack is a
+// singleton column with Markowitz count 0 and so would have been pivoted
+// first, covering its row; checked anyway rather than assumed.
+bool RepairSingularBasis(Workspace& ws, const core::LpProblem& problem,
+                          const la::SingularityInfo& info) {
+  size_t count = std::min(info.unpivoted_cols.size(), info.unpivoted_rows.size());
+  if (count == 0) return false;
+  for (size_t k = 0; k < count; ++k) {
+    int slot = info.unpivoted_cols[k];
+    int row = info.unpivoted_rows[k];
+    if (slot < 0 || slot >= ws.m || row < 0 || row >= ws.m) return false;
+    int slack = problem.num_cols + row;
+    if (ws.basis_slot_of[slack] != -1) return false;
+
+    int leaving = ws.basis[slot];
+    ws.basis_slot_of[leaving] = -1;
+    if (std::isfinite(ws.lo[leaving])) {
+      ws.status[leaving] = Status::kAtLower;
+      ws.value[leaving] = ws.lo[leaving];
+    } else if (std::isfinite(ws.hi[leaving])) {
+      ws.status[leaving] = Status::kAtUpper;
+      ws.value[leaving] = ws.hi[leaving];
+    } else {
+      ws.status[leaving] = Status::kFree;
+      ws.value[leaving] = 0.0;
+    }
+
+    ws.basis[slot] = slack;
+    ws.basis_slot_of[slack] = slot;
+    ws.status[slack] = Status::kBasic;
+  }
+  ws.repaired = true;
+  return true;
 }
 
 double MaxBoundViolation(const Workspace& ws) {
@@ -422,9 +486,21 @@ bool RunPhase(Workspace& ws, const core::LpProblem& problem, const std::vector<d
       bool update_ok = ws.bf.Update(leaving_slot, entering_col, tol);
       if (!update_ok || ws.bf.ShouldRefactorize()) {
         core::CscMatrix current = BuildBasisMatrix(problem, ws.basis);
-        if (!ws.bf.Factorize(current, la::MarkowitzOptions{}, tol)) {
-          numerical_error = true;
-          return false;
+        la::SingularityInfo singular;
+        if (!ws.bf.Factorize(current, la::MarkowitzOptions{}, tol, &singular)) {
+          // Repair the basis and try once more before giving up — see
+          // RepairSingularBasis. Exactly one retry: if a basis built from
+          // the LU's own report of what it could pivot still fails, the
+          // trouble is not a repairable singular column.
+          if (!RepairSingularBasis(ws, problem, singular)) {
+            numerical_error = true;
+            return false;
+          }
+          core::CscMatrix repaired = BuildBasisMatrix(problem, ws.basis);
+          if (!ws.bf.Factorize(repaired, la::MarkowitzOptions{}, tol)) {
+            numerical_error = true;
+            return false;
+          }
         }
         RecomputeBasicValues(ws, problem);
       }
@@ -528,10 +604,31 @@ core::Solution SolveRevisedCore(const core::LpProblem& problem, int max_iteratio
   bool numerical_error = false, hit_limit = false, unbounded = false;
   int iters_used = 0, phase1_iters = 0;
   std::vector<double> zero_cost(ws.n, 0.0);
-  bool phase1_ok = RunPhase(ws, problem, zero_cost, /*is_phase1=*/true, iter_cap, tol,
-                             numerical_error, hit_limit, unbounded, phase1_iters);
+  bool phase1_ok = false;
+  bool p2_numerical_error = false, p2_hit_limit = false, p2_unbounded = false;
+  int phase2_iters = 0;
+
+  // Restart budget for singularity repairs. A repair leaves a valid basis
+  // but a moved point, so the honest response is to redo phase 1 from
+  // there rather than fail — see Workspace::repaired. Capped so a
+  // pathological instance that repairs every round still terminates
+  // instead of looping; each restart also costs a full phase 1, so this
+  // stays small deliberately.
+  constexpr int kMaxRepairRestarts = 4;
+  int repair_restarts = 0;
+
+ phase1_restart:
+  ws.repaired = false;
+  phase1_ok = RunPhase(ws, problem, zero_cost, /*is_phase1=*/true, iter_cap, tol,
+                        numerical_error, hit_limit, unbounded, phase1_iters);
   iters_used += phase1_iters;
 
+  if ((numerical_error || !phase1_ok) && ws.repaired && repair_restarts < kMaxRepairRestarts) {
+    ++repair_restarts;
+    numerical_error = hit_limit = unbounded = false;
+    ws.devex_weight.assign(ws.n, 1.0);
+    goto phase1_restart;
+  }
   if (numerical_error) { solution.status = core::SolveStatus::kNumericalError; return solution; }
   if (hit_limit) { solution.status = core::SolveStatus::kIterationLimit; return solution; }
   if (!phase1_ok) { solution.status = core::SolveStatus::kNumericalError; return solution; }
@@ -557,13 +654,22 @@ core::Solution SolveRevisedCore(const core::LpProblem& problem, int max_iteratio
   // not the real one.
   ws.devex_weight.assign(ws.n, 1.0);
 
-  bool p2_numerical_error = false, p2_hit_limit = false, p2_unbounded = false;
-  int phase2_iters = 0;
+  phase2_iters = 0;
   bool phase2_ok = RunPhase(ws, problem, ws.cost_phase2, /*is_phase1=*/false, iter_cap, tol,
                              p2_numerical_error, p2_hit_limit, p2_unbounded, phase2_iters);
   iters_used += phase2_iters;
   (void)phase2_ok;
 
+  // Same story as phase 1: if a singularity repair moved the point out
+  // from under phase 2, restoring feasibility is phase 1's job, so go do
+  // that and come back rather than reporting a failure.
+  if ((p2_numerical_error || p2_unbounded) && ws.repaired &&
+      repair_restarts < kMaxRepairRestarts) {
+    ++repair_restarts;
+    p2_numerical_error = p2_hit_limit = p2_unbounded = false;
+    ws.devex_weight.assign(ws.n, 1.0);
+    goto phase1_restart;
+  }
   if (p2_unbounded) { solution.status = core::SolveStatus::kUnbounded; return solution; }
   if (p2_numerical_error) { solution.status = core::SolveStatus::kNumericalError; return solution; }
   if (p2_hit_limit) { solution.status = core::SolveStatus::kIterationLimit; return solution; }
