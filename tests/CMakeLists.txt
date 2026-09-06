@@ -21,3 +21,7 @@ add_test(NAME dual_simplex_test COMMAND dual_simplex_test WORKING_DIRECTORY ${CM
 add_executable(refinery_test refinery_test.cpp)
 target_link_libraries(refinery_test PRIVATE inferno_core)
 add_test(NAME refinery_test COMMAND refinery_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_executable(qp_test qp_test.cpp)
+target_link_libraries(qp_test PRIVATE inferno_core)
+add_test(NAME qp_test COMMAND qp_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

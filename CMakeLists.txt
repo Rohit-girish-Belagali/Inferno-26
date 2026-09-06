@@ -24,6 +24,7 @@ add_library(inferno_core
   presolve/presolve.cpp
   firstorder/pdlp.cpp
   models/crude_blending.cpp
+  qp/admm.cpp
   la/scaling.cpp
   la/lu_factors.cpp
   la/markowitz_lu.cpp
