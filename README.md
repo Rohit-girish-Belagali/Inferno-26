@@ -9,7 +9,7 @@ dependency graph. See [`../BUILD_PLAN_V2.md`](../BUILD_PLAN_V2.md) for the
 full 75-day plan, phase gates and kill checkpoints; this README only covers
 what is built so far.
 
-## Status: LP core complete (91/93 Netlib) · QP via ADMM · PDLP CPU reference · refinery model
+## Status: LP 91/93 Netlib · QP via ADMM · PDLP CPU reference · refinery model · C ABI + Python
 
 What exists:
 
@@ -34,8 +34,10 @@ rows, dominated columns, duplicate detection, coefficient tightening).
 PDLP's adaptive step size and restart criterion, and the CUDA port, which
 is hardware-blocked. **MILP (Phase 4) is deliberately out of scope** — the plan's own day-25 kill checkpoint says to abandon MILP
 unless all 98 Netlib instances solve, and at 91/93 they do not; see
-`STATUS.md`. From Phase 5: the unit-scheduling MILP, breadth models,
-Dolan–Moré profiles against HiGHS, the C ABI and Python bindings. True
+`STATUS.md`. From Phase 5: the unit-scheduling MILP, the breadth
+models, a Dolan–Moré profile *against HiGHS* (the one here is a runtime
+distribution, since with a single solver the reference time is its own
+best), and the architecture writeup. True
 Forrest–Tomlin (upgrading from the current PFI update) is also
 outstanding, tracked in `NOTICE_ALGORITHMS.md`.
 
