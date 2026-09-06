@@ -43,6 +43,25 @@ best). True
 Forrest–Tomlin (upgrading from the current PFI update) is also
 outstanding, tracked in `NOTICE_ALGORITHMS.md`.
 
+## The demo
+
+```bash
+./demo/run_demo.sh
+```
+
+Ten steps, walking the analyst user flow exactly as the PS 26119 proposal
+deck describes it — model in (MPS) → parse & validate → presolve → scale →
+concurrent solve manager → exact postsolve → independent checker → report
+— then the refinery model, the breadth models, QP, all three modeling APIs,
+the full benchmark, and the clean-room proof.
+
+It ends with a **capability scorecard against the PS's six named modules,
+including the ones that are not built**. The GPU acceleration layer is the
+headline item in the problem statement's own title and it is marked NOT
+BUILT, because there is no NVIDIA GPU on this machine and no speedup is
+claimed. A demo that hides its gaps is worth less than one that states
+them — the first question from any panel is the gap.
+
 ## Build
 
 ```bash
