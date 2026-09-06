@@ -25,3 +25,9 @@ add_test(NAME refinery_test COMMAND refinery_test WORKING_DIRECTORY ${CMAKE_SOUR
 add_executable(qp_test qp_test.cpp)
 target_link_libraries(qp_test PRIVATE inferno_core)
 add_test(NAME qp_test COMMAND qp_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# Compiled as C on purpose: the ABI exists so C consumers can use it.
+add_executable(api_test api_test.c)
+target_link_libraries(api_test PRIVATE inferno_core)
+set_target_properties(api_test PROPERTIES LINKER_LANGUAGE CXX)
+add_test(NAME api_test COMMAND api_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

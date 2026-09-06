@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(inferno_solver LANGUAGES CXX)
+project(inferno_solver LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,6 +25,7 @@ add_library(inferno_core
   firstorder/pdlp.cpp
   models/crude_blending.cpp
   qp/admm.cpp
+  api/inferno.cpp
   la/scaling.cpp
   la/lu_factors.cpp
   la/markowitz_lu.cpp
