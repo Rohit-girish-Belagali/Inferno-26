@@ -9,7 +9,7 @@ dependency graph. See [`../BUILD_PLAN_V2.md`](../BUILD_PLAN_V2.md) for the
 full 75-day plan, phase gates and kill checkpoints; this README only covers
 what is built so far.
 
-## Status: Phase 2 — revised simplex + presolve (days 11–32)
+## Status: LP core complete (91/93 Netlib), PDLP CPU reference, refinery model
 
 What exists:
 
@@ -21,17 +21,23 @@ What exists:
 - `simplex/dense_simplex.*` — the Phase 1.1 **throwaway** dense tableau, kept only as a comparison baseline (`--solver dense`); no longer the default and not extended further.
 - `presolve/presolve.*` — six reduction kinds to a fixpoint with exact postsolve: fixed-variable substitution, empty-column removal, redundant-row removal, singleton-row bound-tightening-then-removal, free-column-singleton substitution, and general (non-removing) bound tightening — the last three needed real postsolve dual (and, for free column singletons, primal) recovery, not just bound narrowing, see `NOTICE_ALGORITHMS.md` for the derivations and the real bugs the full Netlib run caught fixing them. Verified via the plan's own standing rule (presolve on/off equivalence, checked against real Netlib data) — `--presolve` is opt-in, not yet the CLI/bench default, since the reduction set is still incomplete (forcing rows, dominated columns, duplicate rows/columns, coefficient tightening remain; duplicate-column merging was attempted and reverted after a deep cross-reduction ordering bug, also in `NOTICE_ALGORITHMS.md`).
 - `simplex/dual_simplex.*` — bounded-variable dual simplex on the same LU spine, for BUILD_PLAN_V2.md's "not optional" (MILP node warm starts, Phase 4). **Only problems with a trivial dual-feasible start are supported** — a general dual phase 1 isn't implemented, see `NOTICE_ALGORITHMS.md`. 35/93 verified, zero checker-rejected claims (`--solver dual`).
-- `dashboard/` — two linked pages, `index.html` (wireframe module 6, a live-demo console walking the real Prepare → Solve → Verify pipeline; the GPU/PDLP lane is honestly labeled simulated — Phase 3 hasn't been built, no GPU hardware on the dev machine) and `report.html` (module 5, a sortable/filterable view of the complete real `bench/results.csv`, all 93 instances). Both use genuine numbers from this project's own bench runs, never invented.
+- `dashboard/` — two linked pages, `index.html` (wireframe module 6, a live-demo console walking the real Prepare → Solve → Verify pipeline; the GPU lane is honestly labeled simulated — the PDLP CPU reference is real, but there is no GPU on this machine and no GPU number is claimed) and `report.html` (module 5, a sortable/filterable view of the complete real `bench/results.csv`, all 93 instances). Both use genuine numbers from this project's own bench runs, never invented.
 - `firstorder/pdlp.*` — **PDLP**, a primal-dual first-order solver (Phase 3's CPU reference). PDHG on the saddle-point form, the dual prox reduced to a clamp by Moreau decomposition, power-iteration norm estimate, averaged iterates, adaptive restarts, primal weight balancing, and preconditioning. Converges to full accuracy and passes the checker on well-conditioned instances (`afiro`, `sc50a`, `sc50b`, `recipe` reach the simplex objective to ~1e-10); stalls at 1e-3–1e-4 on harder ones, which needs the adaptive step size and proper restart criterion that are not built yet. **The CUDA port is hardware-blocked** (no NVIDIA GPU here) and no GPU speedup is claimed — see `STATUS.md`.
 - `models/crude_blending.*` + `src/refinery_demo.cpp` — the **refinery crude-blending model** (Phase 5). An LP: the volume-weighted quality ratio is cleared to a linear constraint, which is what keeps it solvable without MILP. `./build/refinery_demo` prints the blend table, realised properties against spec, and marginal values in profit terms.
 - `bench/` — `download_netlib.sh` pulls and decodes the real Netlib LP set from netlib.org; `run_netlib.py --solver {revised,dense,dual,managed} [--presolve]` runs a solve path over every instance and prints a score, scoring by independent-checker PASS rather than solver-claimed status
 
-Not yet built: steepest-edge pricing, a bound-flipping dual ratio test, a general dual phase 1, forcing
-rows/dominated columns/duplicate detection/coefficient tightening for
-presolve (rest of Phase 2); PDLP/GPU (Phase 3); MILP + QP (Phase 4);
-refinery models and packaging (Phase 5). True Forrest-Tomlin (upgrading
-from the current PFI update) is also outstanding, tracked in
-`NOTICE_ALGORITHMS.md`.
+Not yet built, stated plainly: steepest-edge pricing (attempted and
+reverted — see `NOTICE_ALGORITHMS.md`), a bound-flipping dual ratio test,
+a general dual phase 1, and the remaining presolve reductions (forcing
+rows, dominated columns, duplicate detection, coefficient tightening).
+PDLP's adaptive step size and restart criterion, and the CUDA port, which
+is hardware-blocked. **MILP and QP (Phase 4) are deliberately out of
+scope** — the plan's own day-25 kill checkpoint says to abandon MILP
+unless all 98 Netlib instances solve, and at 91/93 they do not; see
+`STATUS.md`. From Phase 5: the unit-scheduling MILP, breadth models,
+Dolan–Moré profiles against HiGHS, the C ABI and Python bindings. True
+Forrest–Tomlin (upgrading from the current PFI update) is also
+outstanding, tracked in `NOTICE_ALGORITHMS.md`.
 
 ## Build
 
