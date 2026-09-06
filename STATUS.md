@@ -30,7 +30,7 @@
 
 ### Phase 3 — GPU / PDLP (days 20–40): 🟡 CPU reference built, CUDA blocked
 - **PDLP on CPU is implemented** (`firstorder/pdlp.*`) — PDHG on the saddle-point form, with the dual prox handled via Moreau decomposition (it reduces to a clamp), power-iteration norm estimation, averaged iterates, adaptive restarts, primal weight balancing, and preconditioning reusing `la/`'s scaling.
-- Converges to full accuracy and passes the independent checker on well-conditioned instances (`afiro`, `sc50a`, `sc50b`, `recipe` all reach the simplex objective to ~1e-10). Stalls around 1e-3–1e-4 relative KKT on harder ones.
+- **Measured: 4 of 15** small Netlib instances reach checker-verified optimality within 30k iterations (`afiro`, `sc50a`, `sc50b`, `recipe`, matching the simplex objective to ~1e-10). The other 11 stall between 1e-5 and 1e-1 relative KKT. This is a reference implementation, not a competitive LP solver, and the docs should not imply otherwise.
 - Not done: adaptive step size and a proper restart criterion (mine restarts on a fixed schedule) — these are the two checklist items that would close that accuracy gap. Also no crossover to a vertex solution.
 - **CUDA port remains hardware-blocked** — no NVIDIA GPU on this machine, which the plan records as a known blocker. The plan's day-40 kill checkpoint says to drop the GPU claim rather than fabricate a speedup, and that is what is being done: there is no GPU number here, real or claimed.
 
