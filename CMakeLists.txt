@@ -22,6 +22,7 @@ add_library(inferno_core
   simplex/dual_simplex.cpp
   simplex/solve_manager.cpp
   presolve/presolve.cpp
+  firstorder/pdlp.cpp
   la/scaling.cpp
   la/lu_factors.cpp
   la/markowitz_lu.cpp
