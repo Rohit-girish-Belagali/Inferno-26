@@ -17,6 +17,7 @@ add_library(inferno_core
   io/mps_reader.cpp
   io/solution_writer.cpp
   checker/checker.cpp
+  checker/mip_checker.cpp
   simplex/dense_simplex.cpp
   simplex/revised_simplex.cpp
   simplex/dual_simplex.cpp
@@ -46,6 +47,7 @@ add_library(inferno_shared SHARED
   io/mps_reader.cpp
   io/solution_writer.cpp
   checker/checker.cpp
+  checker/mip_checker.cpp
   simplex/dense_simplex.cpp
   simplex/revised_simplex.cpp
   simplex/dual_simplex.cpp

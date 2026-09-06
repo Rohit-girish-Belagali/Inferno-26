@@ -44,3 +44,7 @@ add_test(NAME breadth_test COMMAND breadth_test WORKING_DIRECTORY ${CMAKE_SOURCE
 add_executable(mip_test mip_test.cpp)
 target_link_libraries(mip_test PRIVATE inferno_core)
 add_test(NAME mip_test COMMAND mip_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_executable(mip_suite_test mip_suite_test.cpp)
+target_link_libraries(mip_suite_test PRIVATE inferno_core)
+add_test(NAME mip_suite_test COMMAND mip_suite_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
