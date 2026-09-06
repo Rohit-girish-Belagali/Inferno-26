@@ -88,15 +88,37 @@ class CscBuilder {
     columns_[col].emplace_back(row, value);
   }
 
+  // Entries at the same (row, column) are SUMMED, which is the only
+  // defensible reading of "add this entry" twice and the one every caller
+  // has turned out to want. It is not merely a convenience: consumers
+  // downstream index by position -- the LU builds its working matrix by
+  // map assignment -- so leaving duplicates in place means the last one
+  // silently OVERWRITES the rest rather than adding. That produced two
+  // separate real bugs before this was fixed here: a QP KKT matrix whose
+  // diagonal became `sigma` instead of `1 + sigma`, leaving a
+  // near-singular block; and a random sparse LP generator that hit the
+  // same row twice in a column and produced instances the solver then
+  // failed on with a numerical error. Merging once, at the single place
+  // matrices are built, fixes the whole class.
   CscMatrix Build() && {
     CscMatrix m;
     m.rows = rows_;
     m.cols = cols_;
     m.col_ptr.assign(cols_ + 1, 0);
     for (int c = 0; c < cols_; ++c) {
-      std::sort(columns_[c].begin(), columns_[c].end(),
+      auto& col = columns_[c];
+      std::sort(col.begin(), col.end(),
                 [](const auto& a, const auto& b) { return a.first < b.first; });
-      m.col_ptr[c + 1] = m.col_ptr[c] + static_cast<int>(columns_[c].size());
+      std::size_t w = 0;
+      for (std::size_t r = 0; r < col.size(); ++r) {
+        if (w > 0 && col[w - 1].first == col[r].first) {
+          col[w - 1].second += col[r].second;
+        } else {
+          col[w++] = col[r];
+        }
+      }
+      col.resize(w);
+      m.col_ptr[c + 1] = m.col_ptr[c] + static_cast<int>(col.size());
     }
     m.row_idx.resize(m.col_ptr[cols_]);
     m.values.resize(m.col_ptr[cols_]);
