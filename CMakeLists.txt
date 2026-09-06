@@ -24,6 +24,7 @@ add_library(inferno_core
   presolve/presolve.cpp
   firstorder/pdlp.cpp
   models/crude_blending.cpp
+  models/breadth_models.cpp
   qp/admm.cpp
   api/inferno.cpp
   la/scaling.cpp
@@ -50,6 +51,7 @@ add_library(inferno_shared SHARED
   presolve/presolve.cpp
   firstorder/pdlp.cpp
   models/crude_blending.cpp
+  models/breadth_models.cpp
   qp/admm.cpp
   api/inferno.cpp
   la/scaling.cpp

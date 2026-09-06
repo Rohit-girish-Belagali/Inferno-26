@@ -36,3 +36,7 @@ add_test(NAME api_test COMMAND api_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_test(NAME python_bindings_test
          COMMAND python3 ${CMAKE_SOURCE_DIR}/python/test_bindings.py
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_executable(breadth_test breadth_test.cpp)
+target_link_libraries(breadth_test PRIVATE inferno_core)
+add_test(NAME breadth_test COMMAND breadth_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
