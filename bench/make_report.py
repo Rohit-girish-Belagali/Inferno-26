@@ -7,6 +7,13 @@ the committed results file and prints every number the README claims,
 computed rather than transcribed. If a headline number in the docs and one
 here ever disagree, this one is right.
 
+bench/results.csv is committed for exactly that reason: it is the evidence
+behind the claims, readable the moment the repo is cloned and without
+waiting on a download and a full benchmark run. Regenerating it with
+bench/run_netlib.py overwrites it, which is the point — a reader compares
+their own run against ours rather than taking the committed numbers on
+trust.
+
 The performance profile is the Dolan-More construction the plan names. Its
 point is that a single mean runtime hides the distribution: a solver can
 win on average while failing badly somewhere. The profile plots, for each
