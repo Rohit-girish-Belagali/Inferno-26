@@ -17,3 +17,7 @@ add_test(NAME presolve_test COMMAND presolve_test WORKING_DIRECTORY ${CMAKE_SOUR
 add_executable(dual_simplex_test dual_simplex_test.cpp)
 target_link_libraries(dual_simplex_test PRIVATE inferno_core)
 add_test(NAME dual_simplex_test COMMAND dual_simplex_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_executable(refinery_test refinery_test.cpp)
+target_link_libraries(refinery_test PRIVATE inferno_core)
+add_test(NAME refinery_test COMMAND refinery_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

@@ -23,6 +23,7 @@ add_library(inferno_core
   simplex/solve_manager.cpp
   presolve/presolve.cpp
   firstorder/pdlp.cpp
+  models/crude_blending.cpp
   la/scaling.cpp
   la/lu_factors.cpp
   la/markowitz_lu.cpp
@@ -33,6 +34,9 @@ target_include_directories(inferno_core PUBLIC ${CMAKE_SOURCE_DIR})
 
 add_executable(solver src/main.cpp)
 target_link_libraries(solver PRIVATE inferno_core)
+
+add_executable(refinery_demo src/refinery_demo.cpp)
+target_link_libraries(refinery_demo PRIVATE inferno_core)
 
 enable_testing()
 add_subdirectory(tests)
