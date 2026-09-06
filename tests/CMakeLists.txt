@@ -48,3 +48,7 @@ add_test(NAME mip_test COMMAND mip_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_executable(mip_suite_test mip_suite_test.cpp)
 target_link_libraries(mip_suite_test PRIVATE inferno_core)
 add_test(NAME mip_suite_test COMMAND mip_suite_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_executable(industrial_mip_test industrial_mip_test.cpp)
+target_link_libraries(industrial_mip_test PRIVATE inferno_core)
+add_test(NAME industrial_mip_test COMMAND industrial_mip_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

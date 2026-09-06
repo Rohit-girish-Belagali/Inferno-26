@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "core/lp_problem.hpp"
+#include "core/mip_problem.hpp"
 
 namespace inferno::models {
 
@@ -74,5 +75,30 @@ core::LpProblem BuildCrudeBlendingLp(const BlendingModel& model);
 // genuinely different sulfur/density profiles and costs, three products
 // with real specification windows.
 BlendingModel ExampleRefineryModel();
+
+// --- MILP upgrade: crude activation ------------------------------------
+// The LP above may draw a barrel from any crude. In practice buying a
+// crude at all is a discrete commitment: a cargo, a berth slot, a tank.
+// This adds one binary per crude for "is this crude purchased", a fixed
+// cost for that commitment, and a link row making a crude's volume zero
+// unless it is activated. Every blending and quality constraint from the
+// LP is preserved unchanged; the only new structure is the binary and its
+// link, so a difference in the answer is attributable to the discrete
+// decision rather than to a reformulated model.
+struct RefineryMipModel {
+  BlendingModel blending;
+  std::vector<double> activation_cost;  // fixed cost per crude actually used
+  // Total throughput the refinery can process this period. Without it the
+  // model has no reason to leave any barrel unbought -- products are
+  // unbounded above, so selling more is always profitable, every crude is
+  // consumed in full, and each activation binary lands exactly on 1. The
+  // relaxation is then integral, the search terminates at zero nodes, and
+  // the discrete decision is vacuous. A finite throughput makes crude
+  // selection an actual choice, which is both realistic (units have
+  // capacity) and what makes this a MILP worth solving.
+  double throughput_capacity = 0.0;  // 0 or less means uncapped
+};
+RefineryMipModel ExampleRefineryMipModel();
+core::MipProblem BuildCrudeBlendingMip(const RefineryMipModel& m);
 
 }  // namespace inferno::models

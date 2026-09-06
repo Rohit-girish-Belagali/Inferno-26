@@ -127,4 +127,88 @@ BlendingModel ExampleRefineryModel() {
   return m;
 }
 
+
+core::MipProblem BuildCrudeBlendingMip(const RefineryMipModel& m) {
+  // Start from the LP, then append one activation binary per crude and a
+  // linking row per crude. Reusing the LP builder verbatim is deliberate:
+  // it guarantees the blending and quality rows are byte-identical to the
+  // continuous model, so the MILP is provably the same problem plus the
+  // discrete decision, not a re-derivation that might differ subtly.
+  core::LpProblem lp = BuildCrudeBlendingLp(m.blending);
+  const int nc = static_cast<int>(m.blending.crudes.size());
+  const int np = static_cast<int>(m.blending.products.size());
+  const int base_cols = lp.num_cols;
+  const int base_rows = lp.num_rows;
+
+  core::MipProblem mp;
+  mp.lp = lp;
+  mp.lp.name = "CRUDE_BLEND_MIP";
+  mp.lp.num_cols = base_cols + nc;
+  mp.lp.col_lo.resize(mp.lp.num_cols, 0.0);
+  mp.lp.col_hi.resize(mp.lp.num_cols, 1.0);
+  mp.lp.obj.resize(mp.lp.num_cols, 0.0);
+  mp.lp.col_names.resize(mp.lp.num_cols);
+  mp.is_integer.assign(mp.lp.num_cols, 0);
+  for (int i = 0; i < nc; ++i) {
+    mp.lp.obj[base_cols + i] = m.activation_cost[i];
+    mp.lp.col_names[base_cols + i] = "use_" + m.blending.crudes[i].name;
+    mp.is_integer[base_cols + i] = 1;
+  }
+
+  // Rebuild the matrix with the original entries plus the link rows:
+  //   sum_j x_ij - availability_i * use_i <= 0
+  // so a crude can only supply volume when its binary is set.
+  std::vector<std::vector<std::pair<int, double>>> cols(mp.lp.num_cols);
+  for (int c = 0; c < base_cols; ++c) {
+    for (int p = lp.a.col_ptr[c]; p < lp.a.col_ptr[c + 1]; ++p) {
+      cols[c].emplace_back(lp.a.row_idx[p], lp.a.values[p]);
+    }
+  }
+  int row = base_rows;
+  if (m.throughput_capacity > 0.0) {
+    for (int i = 0; i < nc; ++i) {
+      for (int j = 0; j < np; ++j) cols[i * np + j].emplace_back(row, 1.0);
+    }
+    mp.lp.row_lo.push_back(-kInfinity);
+    mp.lp.row_hi.push_back(m.throughput_capacity);
+    mp.lp.row_names.push_back("throughput");
+    ++row;
+  }
+  for (int i = 0; i < nc; ++i) {
+    for (int j = 0; j < np; ++j) cols[i * np + j].emplace_back(row, 1.0);
+    cols[base_cols + i].emplace_back(row, -m.blending.crudes[i].availability);
+    mp.lp.row_lo.push_back(-kInfinity);
+    mp.lp.row_hi.push_back(0.0);
+    mp.lp.row_names.push_back("use_link_" + m.blending.crudes[i].name);
+    ++row;
+  }
+  mp.lp.num_rows = row;
+  core::CscBuilder b(row, mp.lp.num_cols);
+  for (int c = 0; c < mp.lp.num_cols; ++c) {
+    for (const auto& [r, v] : cols[c]) {
+      if (v != 0.0) b.AddEntry(c, r, v);
+    }
+  }
+  mp.lp.a = std::move(b).Build();
+  return mp;
+}
+
+RefineryMipModel ExampleRefineryMipModel() {
+  RefineryMipModel m;
+  m.blending = ExampleRefineryModel();
+  // Commitment costs sized so activating every crude is NOT automatically
+  // optimal. This mattered: the first values used here were low enough
+  // that all four binaries came out at 1 in the relaxation, the model
+  // solved at zero nodes, and the discrete decision was vacuous -- the
+  // test passed while exercising nothing. Condensate contributes 12,000
+  // bbl at a marginal value near 33.8/bbl, so a commitment cost above
+  // roughly 405,000 makes buying it a genuinely open question and forces
+  // the search to decide rather than to agree with the relaxation.
+  m.activation_cost = {120000.0, 90000.0, 60000.0, 600000.0};
+  // Below the 137,000 bbl of crude available, so the refinery must choose
+  // which barrels to buy rather than taking all of them.
+  m.throughput_capacity = 110000.0;
+  return m;
+}
+
 }  // namespace inferno::models
