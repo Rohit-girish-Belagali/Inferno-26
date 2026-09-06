@@ -47,7 +47,9 @@
 - **Benchmark report** (`bench/make_report.py`) — computes every headline number from the committed `bench/results.csv` rather than transcribing it, including the Dolan–Moré performance profile.
 - **Clean-room proof** (`bench/verify_clean_room.sh`) — mechanically checks the project's central claim: scans sources and build files, inspects what the binaries actually link, lists every CMake dependency. Exits non-zero on any hit. Currently passes; both binaries link only `libc++` and `libSystem`.
 - **Phase 5 gate verified**: a fresh `git clone` configures, builds, passes all 9 test suites, runs the refinery demo, the clean-room proof and the benchmark report with no manual steps.
-- Not done: the refinery unit-scheduling MILP with Gantt output (needs MILP, out of scope by the day-25 rule), the breadth models (unit commitment, transportation), Dolan–Moré *against HiGHS* (needs HiGHS actually run alongside — the profile here is a runtime distribution and is labelled as such rather than dressed up as a comparison), the architecture writeup, and the rehearsed finale demo.
+- **Breadth models** (`models/breadth_models.*`) — transportation (Hitchcock) and power-system economic dispatch, both textbook formulations from open literature. The dispatch model is named honestly: unit commitment proper is a MILP, so this is the continuous sub-problem it repeatedly solves.
+- **Architecture writeup** (`ARCHITECTURE.md`).
+- Not done: the refinery unit-scheduling MILP with Gantt output (needs MILP, out of scope by the day-25 rule), Dolan–Moré *against HiGHS* (needs HiGHS actually run alongside — the profile here is a runtime distribution and is labelled as such rather than dressed up as a comparison), and the rehearsed finale demo.
 
 ---
 

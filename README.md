@@ -7,7 +7,8 @@ A sovereign LP / MILP / QP optimization engine, built from mathematical
 foundations — no HiGHS, CBC, GLPK, SCIP, OSQP or SuiteSparse anywhere in the
 dependency graph. See [`../BUILD_PLAN_V2.md`](../BUILD_PLAN_V2.md) for the
 full 75-day plan, phase gates and kill checkpoints; this README only covers
-what is built so far.
+what is built so far. [`ARCHITECTURE.md`](ARCHITECTURE.md) explains how the
+pieces fit together and why each is shaped the way it is.
 
 ## Status: LP 91/93 Netlib · QP via ADMM · PDLP CPU reference · refinery model · C ABI + Python
 
@@ -23,6 +24,7 @@ What exists:
 - `simplex/dual_simplex.*` — bounded-variable dual simplex on the same LU spine, for BUILD_PLAN_V2.md's "not optional" (MILP node warm starts, Phase 4). **Only problems with a trivial dual-feasible start are supported** — a general dual phase 1 isn't implemented, see `NOTICE_ALGORITHMS.md`. 35/93 verified, zero checker-rejected claims (`--solver dual`).
 - `dashboard/` — two linked pages, `index.html` (wireframe module 6, a live-demo console walking the real Prepare → Solve → Verify pipeline; the GPU lane is honestly labeled simulated — the PDLP CPU reference is real, but there is no GPU on this machine and no GPU number is claimed) and `report.html` (module 5, a sortable/filterable view of the complete real `bench/results.csv`, all 93 instances). Both use genuine numbers from this project's own bench runs, never invented.
 - `firstorder/pdlp.*` — **PDLP**, a primal-dual first-order solver (Phase 3's CPU reference). PDHG on the saddle-point form, the dual prox reduced to a clamp by Moreau decomposition, power-iteration norm estimate, averaged iterates, adaptive restarts, primal weight balancing, and preconditioning. Measured at **4 of 15** small Netlib instances checker-verified within 30k iterations (matching the simplex objective to ~1e-10); the rest stall between 1e-5 and 1e-1 relative KKT, which needs the adaptive step size and proper restart criterion that are not built yet. A reference implementation, not a competitive LP solver. **The CUDA port is hardware-blocked** (no NVIDIA GPU here) and no GPU speedup is claimed — see `STATUS.md`.
+- `models/breadth_models.*` — **transportation and economic dispatch** (Phase 5 breadth models), showing the engine is a general LP engine rather than something shaped around one use case. The dispatch model is named honestly: unit commitment proper is a MILP, so this is the continuous economic-dispatch sub-problem, with ramp limits coupling consecutive periods.
 - `models/crude_blending.*` + `src/refinery_demo.cpp` — the **refinery crude-blending model** (Phase 5). An LP: the volume-weighted quality ratio is cleared to a linear constraint, which is what keeps it solvable without MILP. `./build/refinery_demo` prints the blend table, realised properties against spec, and marginal values in profit terms.
 - `qp/admm.*` — **convex QP via ADMM** (Phase 4Q), completing the LP/QP pair the problem statement names. Splits `z = Ax` so the quadratic and the inequalities are never handled together; the x-step KKT matrix is quasi-definite and fixed across iterations, so it is factorized once with the Phase 1.2 LU and every iteration is two triangular solves plus vector work. Tested against hand-derived optima.
 - `bench/` — `download_netlib.sh` pulls and decodes the real Netlib LP set from netlib.org; `run_netlib.py --solver {revised,dense,dual,managed} [--presolve]` runs a solve path over every instance and prints a score, scoring by independent-checker PASS rather than solver-claimed status
@@ -34,10 +36,10 @@ rows, dominated columns, duplicate detection, coefficient tightening).
 PDLP's adaptive step size and restart criterion, and the CUDA port, which
 is hardware-blocked. **MILP (Phase 4) is deliberately out of scope** — the plan's own day-25 kill checkpoint says to abandon MILP
 unless all 98 Netlib instances solve, and at 91/93 they do not; see
-`STATUS.md`. From Phase 5: the unit-scheduling MILP, the breadth
-models, a Dolan–Moré profile *against HiGHS* (the one here is a runtime
+`STATUS.md`. From Phase 5: the unit-scheduling MILP and a
+Dolan–Moré profile *against HiGHS* (the one here is a runtime
 distribution, since with a single solver the reference time is its own
-best), and the architecture writeup. True
+best). True
 Forrest–Tomlin (upgrading from the current PFI update) is also
 outstanding, tracked in `NOTICE_ALGORITHMS.md`.
 
