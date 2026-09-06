@@ -26,6 +26,7 @@ add_library(inferno_core
   models/crude_blending.cpp
   models/breadth_models.cpp
   models/industrial_models.cpp
+  mip/branch_and_bound.cpp
   qp/admm.cpp
   api/inferno.cpp
   la/scaling.cpp
@@ -54,6 +55,7 @@ add_library(inferno_shared SHARED
   models/crude_blending.cpp
   models/breadth_models.cpp
   models/industrial_models.cpp
+  mip/branch_and_bound.cpp
   qp/admm.cpp
   api/inferno.cpp
   la/scaling.cpp

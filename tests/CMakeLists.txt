@@ -40,3 +40,7 @@ add_test(NAME python_bindings_test
 add_executable(breadth_test breadth_test.cpp)
 target_link_libraries(breadth_test PRIVATE inferno_core)
 add_test(NAME breadth_test COMMAND breadth_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_executable(mip_test mip_test.cpp)
+target_link_libraries(mip_test PRIVATE inferno_core)
+add_test(NAME mip_test COMMAND mip_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
