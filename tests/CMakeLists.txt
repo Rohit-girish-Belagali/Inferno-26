@@ -31,3 +31,8 @@ add_executable(api_test api_test.c)
 target_link_libraries(api_test PRIVATE inferno_core)
 set_target_properties(api_test PROPERTIES LINKER_LANGUAGE CXX)
 add_test(NAME api_test COMMAND api_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# Bindings that are not run are bindings that rot.
+add_test(NAME python_bindings_test
+         COMMAND python3 ${CMAKE_SOURCE_DIR}/python/test_bindings.py
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

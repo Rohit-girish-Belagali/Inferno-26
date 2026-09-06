@@ -34,6 +34,33 @@ add_library(inferno_core
 )
 target_include_directories(inferno_core PUBLIC ${CMAKE_SOURCE_DIR})
 
+# Shared library exposing the C ABI, for the Python bindings and any other
+# out-of-process consumer. Built from the same sources as the static
+# library rather than wrapping it, since linking a static archive into a
+# shared object needs position-independent code throughout and this is
+# simpler than arranging that.
+add_library(inferno_shared SHARED
+  io/mps_reader.cpp
+  io/solution_writer.cpp
+  checker/checker.cpp
+  simplex/dense_simplex.cpp
+  simplex/revised_simplex.cpp
+  simplex/dual_simplex.cpp
+  simplex/solve_manager.cpp
+  presolve/presolve.cpp
+  firstorder/pdlp.cpp
+  models/crude_blending.cpp
+  qp/admm.cpp
+  api/inferno.cpp
+  la/scaling.cpp
+  la/lu_factors.cpp
+  la/markowitz_lu.cpp
+  la/lu_solve.cpp
+  la/basis_factorization.cpp
+)
+target_include_directories(inferno_shared PUBLIC ${CMAKE_SOURCE_DIR})
+set_target_properties(inferno_shared PROPERTIES OUTPUT_NAME inferno)
+
 add_executable(solver src/main.cpp)
 target_link_libraries(solver PRIVATE inferno_core)
 
