@@ -39,6 +39,18 @@ struct BranchAndBoundOptions {
   // and an early incumbent is what makes bound-based pruning bite.
   bool rounding_heuristic = true;
   bool verbose = false;
+  // Iteration cap for the LP solved at each node, INCLUDING the root.
+  // Without it the time limit is not actually a limit: the root relaxation
+  // is solved before the search loop begins and the loop's clock check
+  // only runs between nodes, so a single slow LP runs to completion no
+  // matter what the caller asked for. Measured: a 5000-binary instance
+  // blew past a 15-second limit by more than ten minutes inside the root
+  // solve alone.
+  //
+  // A node whose LP hits this cap is treated as UNRESOLVED, not as
+  // infeasible -- which the bound accounting already handles correctly, so
+  // capping work can cost a proof but can never produce a wrong answer.
+  int lp_iteration_limit = 200000;
 };
 
 core::MipSolution SolveMip(const core::MipProblem& problem,

@@ -80,5 +80,8 @@ target_link_libraries(refinery_demo PRIVATE inferno_core)
 add_executable(battery src/battery.cpp)
 target_link_libraries(battery PRIVATE inferno_core)
 
+add_executable(mip_scale src/mip_scale.cpp)
+target_link_libraries(mip_scale PRIVATE inferno_core)
+
 enable_testing()
 add_subdirectory(tests)

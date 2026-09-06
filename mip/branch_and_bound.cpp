@@ -64,7 +64,7 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
     if (opts.use_presolve) {
       auto pre = presolve::Presolve(lp);
       if (pre.infeasible) return NodeResult::kInfeasible;
-      core::Solution reduced = simplex::SolveRevised(pre.reduced);
+      core::Solution reduced = simplex::SolveRevised(pre.reduced, opts.lp_iteration_limit, tol);
       if (reduced.status != core::SolveStatus::kOptimal) {
         s.status = reduced.status;
         return reduced.status == core::SolveStatus::kInfeasible ? NodeResult::kInfeasible
@@ -72,7 +72,7 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
       }
       s = presolve::Postsolve(lp, pre, reduced);
     } else {
-      s = simplex::SolveRevised(lp);
+      s = simplex::SolveRevised(lp, opts.lp_iteration_limit, tol);
     }
     if (s.status == core::SolveStatus::kOptimal) return NodeResult::kOptimal;
     if (s.status == core::SolveStatus::kInfeasible) return NodeResult::kInfeasible;
@@ -107,9 +107,19 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
   // Rounds a relaxation to the nearest integer point and keeps it if it is
   // actually feasible. Cheap, and an incumbent found early is what lets
   // bound pruning discard subtrees instead of exploring them.
-  auto try_rounding = [&](const std::vector<double>& x, double& incumbent_obj,
-                          std::vector<double>& incumbent_x) {
-    if (!opts.rounding_heuristic) return;
+  // Tries one specific rounding of a relaxation and keeps it if feasible
+  // and better. `mode` 0 rounds to nearest, 1 rounds DOWN.
+  //
+  // Rounding down matters more than it looks. These models are dominated
+  // by packing rows (sum of weights <= capacity), and rounding a
+  // fractional solution UP almost always violates them -- which is why
+  // nearest-rounding alone found NO incumbent at all on the 1000-binary
+  // scale instance. Rounding down sacrifices objective value but lands
+  // inside the feasible region, and any incumbent is worth far more than
+  // none: without one, bound-based pruning cannot fire and the search
+  // explores blindly.
+  auto try_rounding_mode = [&](const std::vector<double>& x, int mode, double& incumbent_obj,
+                               std::vector<double>& incumbent_x) {
     std::vector<double> r = x;
     for (int j = 0; j < n; ++j) {
       if (problem.is_integer[j]) {
@@ -124,7 +134,8 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
         double hi = std::isfinite(problem.lp.col_hi[j]) ? std::floor(problem.lp.col_hi[j] + tol.feasibility)
                                                          : kInfinity;
         if (lo > hi) return;  // no integer fits in this column's box
-        r[j] = std::min(std::max(std::round(r[j]), lo), hi);
+        double target = (mode == 0) ? std::round(r[j]) : std::floor(r[j] + tol.feasibility);
+        r[j] = std::min(std::max(target, lo), hi);
       } else {
         r[j] = std::min(std::max(r[j], problem.lp.col_lo[j]), problem.lp.col_hi[j]);
       }
@@ -148,6 +159,13 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
     }
   };
 
+  auto try_rounding = [&](const std::vector<double>& x, double& incumbent_obj,
+                          std::vector<double>& incumbent_x) {
+    if (!opts.rounding_heuristic) return;
+    try_rounding_mode(x, 0, incumbent_obj, incumbent_x);  // nearest
+    try_rounding_mode(x, 1, incumbent_obj, incumbent_x);  // down: feasible for packing rows
+  };
+
   // --- Root relaxation. Its objective is the initial global bound. ---
   Node root;
   core::Solution root_sol;
@@ -165,6 +183,16 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
     } else {
       out.status = core::SolveStatus::kNumericalError;
     }
+    // Same reasoning as the no-incumbent path below: with no usable root
+    // relaxation there is no objective, no bound and no gap, and leaving
+    // the zero defaults in place would print like a perfectly solved
+    // problem. This path is reached when the root LP itself exceeds the
+    // iteration budget, which is exactly what happens on the largest
+    // scale instances.
+    out.objective_value = kInfinity;
+    out.best_bound = -kInfinity;
+    out.gap = kInfinity;
+    out.proved_optimal = false;
     return out;
   }
 
@@ -278,6 +306,13 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
     // whole tree was resolved; otherwise the honest answer is that the
     // search ran out of budget without finding one.
     out.status = all_resolved ? core::SolveStatus::kInfeasible : core::SolveStatus::kIterationLimit;
+    // With no incumbent there is no objective and no gap. Leaving the
+    // defaults in place reports objective 0 and gap 0, which reads exactly
+    // like a perfectly solved problem -- the most misleading possible
+    // output for a run that found nothing. Say "unknown" instead.
+    out.objective_value = kInfinity;
+    out.gap = kInfinity;
+    out.proved_optimal = false;
     return out;
   }
   out.x = incumbent_x;
