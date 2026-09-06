@@ -22,6 +22,8 @@ What exists:
 - `presolve/presolve.*` — six reduction kinds to a fixpoint with exact postsolve: fixed-variable substitution, empty-column removal, redundant-row removal, singleton-row bound-tightening-then-removal, free-column-singleton substitution, and general (non-removing) bound tightening — the last three needed real postsolve dual (and, for free column singletons, primal) recovery, not just bound narrowing, see `NOTICE_ALGORITHMS.md` for the derivations and the real bugs the full Netlib run caught fixing them. Verified via the plan's own standing rule (presolve on/off equivalence, checked against real Netlib data) — `--presolve` is opt-in, not yet the CLI/bench default, since the reduction set is still incomplete (forcing rows, dominated columns, duplicate rows/columns, coefficient tightening remain; duplicate-column merging was attempted and reverted after a deep cross-reduction ordering bug, also in `NOTICE_ALGORITHMS.md`).
 - `simplex/dual_simplex.*` — bounded-variable dual simplex on the same LU spine, for BUILD_PLAN_V2.md's "not optional" (MILP node warm starts, Phase 4). **Only problems with a trivial dual-feasible start are supported** — a general dual phase 1 isn't implemented, see `NOTICE_ALGORITHMS.md`. 35/93 verified, zero checker-rejected claims (`--solver dual`).
 - `dashboard/` — two linked pages, `index.html` (wireframe module 6, a live-demo console walking the real Prepare → Solve → Verify pipeline; the GPU/PDLP lane is honestly labeled simulated — Phase 3 hasn't been built, no GPU hardware on the dev machine) and `report.html` (module 5, a sortable/filterable view of the complete real `bench/results.csv`, all 93 instances). Both use genuine numbers from this project's own bench runs, never invented.
+- `firstorder/pdlp.*` — **PDLP**, a primal-dual first-order solver (Phase 3's CPU reference). PDHG on the saddle-point form, the dual prox reduced to a clamp by Moreau decomposition, power-iteration norm estimate, averaged iterates, adaptive restarts, primal weight balancing, and preconditioning. Converges to full accuracy and passes the checker on well-conditioned instances (`afiro`, `sc50a`, `sc50b`, `recipe` reach the simplex objective to ~1e-10); stalls at 1e-3–1e-4 on harder ones, which needs the adaptive step size and proper restart criterion that are not built yet. **The CUDA port is hardware-blocked** (no NVIDIA GPU here) and no GPU speedup is claimed — see `STATUS.md`.
+- `models/crude_blending.*` + `src/refinery_demo.cpp` — the **refinery crude-blending model** (Phase 5). An LP: the volume-weighted quality ratio is cleared to a linear constraint, which is what keeps it solvable without MILP. `./build/refinery_demo` prints the blend table, realised properties against spec, and marginal values in profit terms.
 - `bench/` — `download_netlib.sh` pulls and decodes the real Netlib LP set from netlib.org; `run_netlib.py --solver {revised,dense,dual,managed} [--presolve]` runs a solve path over every instance and prints a score, scoring by independent-checker PASS rather than solver-claimed status
 
 Not yet built: steepest-edge pricing, a bound-flipping dual ratio test, a general dual phase 1, forcing
@@ -47,6 +49,8 @@ cmake --build build -j
 # checker: PASS primal=... dual=... complementarity=...
 
 ./build/solver bench/netlib/mps/afiro.mps --solver dense   # Phase 1.1 baseline, for comparison
+
+./build/refinery_demo    # the Phase 5 crude-blending model, solved and verified
 ```
 
 ## Test
