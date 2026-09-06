@@ -28,32 +28,38 @@ printf 'SIH 2026 · Problem Statement 26119 · Team INFERNO\n'
 printf 'Extended demonstration run — all output live, nothing pre-computed.\n'
 hr
 
-stage "STAGE 1/6 — Correctness gate: the full test suite"
+stage "STAGE 1/7 — Correctness gate: the full test suite"
 note "10 suites covering LP, QP, presolve/postsolve, linear algebra, the"
 note "C ABI (compiled as C), the Python bindings and every model."
 (cd $B && ctest --output-on-failure 2>&1) | tail -20
 elapsed
 
-stage "STAGE 2/6 — Sovereignty: no third-party solver, checked mechanically"
+stage "STAGE 2/7 — Sovereignty: no third-party solver, checked mechanically"
 ./bench/verify_clean_room.sh
 elapsed
 
-stage "STAGE 3/6 — The PS 26119 problem battery"
+stage "STAGE 3/7 — The PS 26119 problem battery"
 note "Industrial models plus degeneracy, ill-conditioning and scale stress."
 $B/battery --long
 elapsed
 
-stage "STAGE 4/6 — Refinery crude blending, MRPL's own domain"
+stage "STAGE 4/7 — MILP scale characterisation"
+note "Ramps binary count under a hard time limit and reports what actually"
+note "happened, including the sizes where optimality is NOT proved."
+$B/mip_scale 15
+elapsed
+
+stage "STAGE 5/7 — Refinery crude blending, MRPL's own domain"
 $B/refinery_demo
 elapsed
 
-stage "STAGE 5/6 — Full Netlib benchmark, all 93 instances, live"
+stage "STAGE 6/7 — Full Netlib benchmark, all 93 instances, live"
 note "This is the long stage. Each line is one real industrial LP, solved"
 note "and then independently verified. Expect roughly 10 minutes."
 python3 -u bench/run_netlib.py --solver revised --presolve
 elapsed
 
-stage "STAGE 6/6 — Benchmark report and performance profile"
+stage "STAGE 7/7 — Benchmark report and performance profile"
 python3 bench/make_report.py
 elapsed
 
