@@ -25,6 +25,7 @@ add_library(inferno_core
   firstorder/pdlp.cpp
   models/crude_blending.cpp
   models/breadth_models.cpp
+  models/industrial_models.cpp
   qp/admm.cpp
   api/inferno.cpp
   la/scaling.cpp
@@ -52,6 +53,7 @@ add_library(inferno_shared SHARED
   firstorder/pdlp.cpp
   models/crude_blending.cpp
   models/breadth_models.cpp
+  models/industrial_models.cpp
   qp/admm.cpp
   api/inferno.cpp
   la/scaling.cpp
@@ -68,6 +70,9 @@ target_link_libraries(solver PRIVATE inferno_core)
 
 add_executable(refinery_demo src/refinery_demo.cpp)
 target_link_libraries(refinery_demo PRIVATE inferno_core)
+
+add_executable(battery src/battery.cpp)
+target_link_libraries(battery PRIVATE inferno_core)
 
 enable_testing()
 add_subdirectory(tests)
