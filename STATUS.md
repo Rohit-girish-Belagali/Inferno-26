@@ -28,15 +28,21 @@
 - **Full Netlib (`--presolve`, revised solver): 91/93 verified, zero checker-rejected claims, zero numerical errors.** Fixed `greenbeb` (previously wouldn't converge in 1158s+) and `pilotnov`; net effect across all additions this session was clearly positive.
 - Phase 2 gate ("30% size reduction") not formally measured yet, but the reduction set is meaningfully larger now.
 
-### Phase 3 — GPU / PDLP (days 20–40): ⏸️ Not Started
-- Nothing. Explicitly blocked (no GPU hardware on dev machine, per plan note). UI/dashboard features simulated.
+### Phase 3 — GPU / PDLP (days 20–40): 🟡 CPU reference built, CUDA blocked
+- **PDLP on CPU is implemented** (`firstorder/pdlp.*`) — PDHG on the saddle-point form, with the dual prox handled via Moreau decomposition (it reduces to a clamp), power-iteration norm estimation, averaged iterates, adaptive restarts, primal weight balancing, and preconditioning reusing `la/`'s scaling.
+- Converges to full accuracy and passes the independent checker on well-conditioned instances (`afiro`, `sc50a`, `sc50b`, `recipe` all reach the simplex objective to ~1e-10). Stalls around 1e-3–1e-4 relative KKT on harder ones.
+- Not done: adaptive step size and a proper restart criterion (mine restarts on a fixed schedule) — these are the two checklist items that would close that accuracy gap. Also no crossover to a vertex solution.
+- **CUDA port remains hardware-blocked** — no NVIDIA GPU on this machine, which the plan records as a known blocker. The plan's day-40 kill checkpoint says to drop the GPU claim rather than fabricate a speedup, and that is what is being done: there is no GPU number here, real or claimed.
 
-### Phase 4 — MILP / QP (days 33–60): ⏸️ Not Started
-- Nothing. No branch-and-bound, cuts, heuristics, or QP/ADMM.
+### Phase 4 — MILP / QP (days 33–60): ⏸️ Deliberately out of scope
+- Nothing built, and this is a decision rather than a gap. The plan's own day-25 kill checkpoint reads: "do all 98 Netlib instances solve to 1e-6? **No → abandon MILP.** Narrow to LP + GPU path + refinery models." At 91/93 that checkpoint is not met, so MILP stays unbuilt. Its stated rationale — "a genuinely correct LP solver with an honest scope statement beats a broken MILP solver with an ambitious one" — is being followed rather than overridden.
+- QP (4Q) is also unbuilt. It is the cheapest remaining sub-stage per unit of credit (ADMM reusing the Phase 1.2 KKT factorization) and is the most defensible next addition if scope reopens.
 
-### Phase 5 — Refinery Models, Benchmark Report, Packaging (days 55–75): 🟡 Early / Partial
-- The actual refinery/crude-blending models and Dolan-Moré benchmark report aren't built.
-- What is done early: the demo dashboard and bench-results report (wireframe modules 5 & 6), which overlaps with Phase 5's "demo" intent even though built out of order.
+### Phase 5 — Refinery Models, Benchmark Report, Packaging (days 55–75): 🟡 Partial
+- **Crude blending model built** (`models/crude_blending.*`, `src/refinery_demo.cpp`) — the model the plan opens Phase 5 with, on the grounds that "generic benchmark numbers will not move MRPL". Formulated as an LP by clearing the volume-weighted quality ratio to a linear form, so it runs on the solver this project actually has. Solves, checker-clean, with sulfur caps binding exactly at spec, and reports marginal values in profit terms for a planner.
+- Covered by `tests/refinery_test.cpp`, which recomputes supply, demand and every spec window from raw volumes rather than trusting the LP.
+- Also done early: the demo dashboard and bench-results report (wireframe modules 5 & 6).
+- Not done: the refinery unit-scheduling MILP with Gantt output (needs MILP, deliberately out of scope), breadth models, Dolan-Moré profiles against HiGHS, C ABI / Python bindings, architecture writeup.
 
 ---
 
