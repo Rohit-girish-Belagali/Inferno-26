@@ -259,6 +259,34 @@ class AiFailureMatrix(unittest.TestCase):
         self.assertIn("still available", out["message"])
         self.assert_solver_still_works(a)
 
+    def test_http_404_is_retried(self):
+        """OpenRouter answers 404 when it has no provider endpoint free for
+        the model right now, not only when the model does not exist. Seen
+        live: the same request failed once and succeeded seconds later, so
+        treating 404 as permanent turned a transient hiccup into a visible
+        mid-demo failure."""
+        t = transport_returning("", status=404)
+        a = make_app(client=make_client(t), key="k")
+        out = a.route_formulate({"message": "pick a plant"})
+        self.assertEqual(out["ai"]["code"], llm.AI_HTTP_ERROR)
+        self.assertEqual(len(t.calls), 3)
+        self.assert_solver_still_works(a)
+
+    def test_404_that_recovers_on_retry_returns_the_model(self):
+        calls = {"n": 0}
+
+        def t(url, payload, headers, timeout):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return 404, b"{}"
+            return 200, envelope(json.dumps(GOOD_MODEL))
+
+        a = make_app(client=make_client(t), key="k")
+        out = a.route_formulate({"message": "pick a plant"})
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(out["mode"], "model")
+        self.assertEqual(calls["n"], 2)
+
     def test_http_400_is_not_retried(self):
         t = transport_returning("", status=400)
         a = make_app(client=make_client(t), key="k")

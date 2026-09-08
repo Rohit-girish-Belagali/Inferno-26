@@ -167,6 +167,22 @@ class Config:
         }
 
 
+def _retryable(status):
+    """Which HTTP statuses are worth a second attempt.
+
+    5xx and 429 are the obvious ones. 404 is here for a reason found the
+    hard way against the live gateway: OpenRouter answers 404 when it has
+    no provider endpoint available for the requested model right now, not
+    only when the model does not exist. The identical request succeeded on
+    the next attempt seconds later. Treating 404 as permanent meant a
+    transient upstream hiccup surfaced as a hard failure mid-demo, with the
+    fallback summary shown when a retry would have produced the real
+    answer. A genuinely wrong model id still fails -- it just fails after
+    the retry budget rather than immediately.
+    """
+    return status == 429 or status == 404 or status >= 500
+
+
 def _post_json(url, payload, headers, timeout):
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
@@ -220,8 +236,7 @@ class OpenRouterClient:
                 detail = f"HTTP {exc.code}"
                 last = LlmResult(False, code=code, message=detail, attempts=attempt)
                 self._log(code, detail)
-                # 4xx other than 429 will not become true on a retry.
-                if exc.code == 429 or exc.code >= 500:
+                if _retryable(exc.code):
                     if attempt < cfg.max_attempts:
                         self._sleep(min(2.0 * attempt, 4.0))
                         continue
@@ -248,7 +263,7 @@ class OpenRouterClient:
                     self._sleep(min(2.0 * attempt, 4.0))
                     continue
                 return last
-            if status >= 500:
+            if _retryable(status):
                 self._log(AI_HTTP_ERROR, f"HTTP {status}")
                 last = LlmResult(False, code=AI_HTTP_ERROR, message=f"HTTP {status}",
                                  attempts=attempt)
