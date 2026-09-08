@@ -16,3 +16,7 @@ compile_commands.json
 # bench/results.csv is intentionally TRACKED: it is the evidence behind
 # the numbers the README claims, and bench/make_report.py reads only it.
 
+
+# The OpenRouter key, when running from a double-clicked launcher.
+# Never committed: a key in a repository is a key that must be rotated.
+openrouter_key.txt
