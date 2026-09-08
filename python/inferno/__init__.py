@@ -16,9 +16,10 @@ irrelevant.
 
 import ctypes
 import os
-from ctypes import POINTER, c_char_p, c_double, c_int, c_void_p
+from ctypes import POINTER, Structure, c_char_p, c_double, c_int, c_void_p
 
-__all__ = ["Problem", "Result", "SolveStatus", "InfernoError", "load_library", "version"]
+__all__ = ["Problem", "Result", "MipResult", "NodeEvent", "SolveStatus", "InfernoError",
+           "load_library", "version"]
 
 INFINITY = 1.0e308
 
@@ -41,6 +42,90 @@ class SolveStatus:
     @classmethod
     def name(cls, value):
         return cls._NAMES.get(value, f"UNKNOWN({value})")
+
+
+class NodeOutcome:
+    ROOT = 0
+    BRANCHED = 1
+    INTEGER_FEASIBLE = 2
+    INFEASIBLE = 3
+    DOMINATED = 4
+    GAP_CUT = 5
+    RELAXATION_FAILED = 6
+
+    _NAMES = {0: "root", 1: "branched", 2: "integer", 3: "infeasible",
+              4: "dominated", 5: "gap-cut", 6: "unresolved"}
+
+    @classmethod
+    def name(cls, value):
+        return cls._NAMES.get(value, f"unknown({value})")
+
+
+class _CNodeEvent(Structure):
+    """Mirrors inferno_node_event exactly. Field order and types must match
+    the C struct or every read is garbage — ctypes cannot check this."""
+    _fields_ = [
+        ("node_index", c_int),
+        ("depth", c_int),
+        ("branch_var", c_int),
+        ("branch_value", c_double),
+        ("node_bound", c_double),
+        ("incumbent", c_double),
+        ("best_bound", c_double),
+        ("outcome", c_int),
+        ("elapsed_seconds", c_double),
+        ("open_nodes", c_int),
+    ]
+
+
+class NodeEvent:
+    """One node of a real branch-and-bound search, as the solver reported
+    it. Nothing here is computed on the Python side."""
+
+    __slots__ = ("node_index", "depth", "branch_var", "branch_value", "node_bound",
+                 "incumbent", "best_bound", "outcome", "elapsed_seconds", "open_nodes")
+
+    def __init__(self, c):
+        self.node_index = c.node_index
+        self.depth = c.depth
+        self.branch_var = c.branch_var
+        self.branch_value = c.branch_value
+        self.node_bound = _from_sentinel(c.node_bound)
+        self.incumbent = _from_sentinel(c.incumbent)
+        self.best_bound = _from_sentinel(c.best_bound)
+        self.outcome = c.outcome
+        self.elapsed_seconds = c.elapsed_seconds
+        self.open_nodes = c.open_nodes
+
+    @property
+    def outcome_name(self):
+        return NodeOutcome.name(self.outcome)
+
+    def as_dict(self):
+        return {
+            "node": self.node_index,
+            "depth": self.depth,
+            "branch_var": self.branch_var,
+            "branch_value": self.branch_value,
+            "node_bound": self.node_bound,
+            "incumbent": self.incumbent,
+            "best_bound": self.best_bound,
+            "outcome": self.outcome_name,
+            "elapsed": self.elapsed_seconds,
+            "open_nodes": self.open_nodes,
+        }
+
+
+def _from_sentinel(v):
+    """The C side represents 'no incumbent yet' / 'no bound yet' as the
+    large finite INFINITY sentinel, because not every calling language can
+    express IEEE infinity. Python can, so convert back rather than letting
+    1e308 leak into a UI as a real number."""
+    if v >= INFINITY:
+        return float("inf")
+    if v <= -INFINITY:
+        return float("-inf")
+    return v
 
 
 class InfernoError(RuntimeError):
@@ -109,6 +194,22 @@ def _bind(lib):
     for fn in ("inferno_get_solution", "inferno_get_duals"):
         getattr(lib, fn).restype = c_int
         getattr(lib, fn).argtypes = [c_void_p, POINTER(c_double), c_int]
+    lib.inferno_problem_set_integer.restype = c_int
+    lib.inferno_problem_set_integer.argtypes = [c_void_p, POINTER(c_int), c_int]
+    lib.inferno_solve_mip.restype = c_int
+    lib.inferno_solve_mip.argtypes = [c_void_p, c_double, c_int, c_double, c_int]
+    for fn in ("inferno_get_nodes_explored", "inferno_get_proved_optimal",
+               "inferno_get_event_count"):
+        getattr(lib, fn).restype = c_int
+        getattr(lib, fn).argtypes = [c_void_p, POINTER(c_int)]
+    for fn in ("inferno_get_best_bound", "inferno_get_gap", "inferno_get_solve_seconds"):
+        getattr(lib, fn).restype = c_int
+        getattr(lib, fn).argtypes = [c_void_p, POINTER(c_double)]
+    lib.inferno_get_events.restype = c_int
+    lib.inferno_get_events.argtypes = [c_void_p, POINTER(_CNodeEvent), c_int, c_int,
+                                       POINTER(c_int)]
+    lib.inferno_node_outcome_string.restype = c_char_p
+    lib.inferno_node_outcome_string.argtypes = [c_int]
     lib.inferno_status_string.restype = c_char_p
     lib.inferno_status_string.argtypes = [c_int]
     lib.inferno_version.restype = c_char_p
@@ -145,6 +246,27 @@ class Result:
     def __repr__(self):
         return (f"Result(status={self.status_name}, objective={self.objective!r}, "
                 f"iterations={self.iterations}, checker_passed={self.checker_passed})")
+
+
+class MipResult(Result):
+    """A MILP answer. `proved_optimal` is the field that matters and is
+    deliberately separate from `status`: branch-and-bound can return a
+    perfectly good incumbent it could not prove optimal, and collapsing
+    those two into one word is how a solver ends up overclaiming."""
+
+    def __init__(self, status, objective, nodes, checker_passed, x, best_bound, gap,
+                 proved_optimal, seconds):
+        super().__init__(status, objective, nodes, checker_passed, x, [])
+        self.nodes = nodes
+        self.best_bound = best_bound
+        self.gap = gap
+        self.proved_optimal = proved_optimal
+        self.seconds = seconds
+
+    def __repr__(self):
+        return (f"MipResult(status={self.status_name}, objective={self.objective!r}, "
+                f"bound={self.best_bound!r}, gap={self.gap!r}, nodes={self.nodes}, "
+                f"proved_optimal={self.proved_optimal}, checker_passed={self.checker_passed})")
 
 
 class Problem:
@@ -217,6 +339,62 @@ class Problem:
             y = list(ybuf)
 
         return Result(status.value, objective.value, iters.value, bool(passed.value), x, y)
+
+    def set_integer(self, flags):
+        """Marks which columns must be integral, making this a MILP. Pass
+        None to clear every flag and go back to a pure LP."""
+        if flags is None:
+            _check(self._lib, self._lib.inferno_problem_set_integer(self._handle, None, 0))
+            return
+        buf = (c_int * len(flags))(*[1 if f else 0 for f in flags])
+        _check(self._lib, self._lib.inferno_problem_set_integer(self._handle, buf, len(flags)))
+
+    def solve_mip(self, time_limit=30.0, node_limit=200000, gap_tolerance=1e-6, presolve=True):
+        """Runs branch-and-bound. This releases the GIL for the duration of
+        the C call, so another thread may poll `events()` to watch the real
+        search progress while this is running."""
+        _check(self._lib, self._lib.inferno_solve_mip(
+            self._handle, float(time_limit), int(node_limit), float(gap_tolerance),
+            1 if presolve else 0))
+
+        status, nodes, passed, proved = c_int(), c_int(), c_int(), c_int()
+        objective, bound, gap, seconds = c_double(), c_double(), c_double(), c_double()
+        _check(self._lib, self._lib.inferno_get_solve_status(self._handle, ctypes.byref(status)))
+        _check(self._lib, self._lib.inferno_get_objective(self._handle, ctypes.byref(objective)))
+        _check(self._lib, self._lib.inferno_get_nodes_explored(self._handle, ctypes.byref(nodes)))
+        _check(self._lib, self._lib.inferno_get_checker_passed(self._handle, ctypes.byref(passed)))
+        _check(self._lib, self._lib.inferno_get_best_bound(self._handle, ctypes.byref(bound)))
+        _check(self._lib, self._lib.inferno_get_gap(self._handle, ctypes.byref(gap)))
+        _check(self._lib, self._lib.inferno_get_proved_optimal(self._handle, ctypes.byref(proved)))
+        _check(self._lib, self._lib.inferno_get_solve_seconds(self._handle, ctypes.byref(seconds)))
+
+        x = []
+        if status.value == SolveStatus.OPTIMAL:
+            nc = self.num_cols
+            xbuf = (c_double * nc)()
+            _check(self._lib, self._lib.inferno_get_solution(self._handle, xbuf, nc))
+            x = list(xbuf)
+
+        return MipResult(status.value, _from_sentinel(objective.value), nodes.value,
+                         bool(passed.value), x, _from_sentinel(bound.value),
+                         _from_sentinel(gap.value), bool(proved.value), seconds.value)
+
+    def event_count(self):
+        """Node events recorded so far. Safe to call from another thread
+        while solve_mip is running."""
+        v = c_int()
+        _check(self._lib, self._lib.inferno_get_event_count(self._handle, ctypes.byref(v)))
+        return v.value
+
+    def events(self, start=0, limit=1000):
+        """Reads recorded node events. Safe to call from another thread
+        while solve_mip is running — this is how live search progress
+        reaches a UI without anything being simulated."""
+        buf = (_CNodeEvent * limit)()
+        written = c_int()
+        _check(self._lib, self._lib.inferno_get_events(
+            self._handle, buf, int(start), int(limit), ctypes.byref(written)))
+        return [NodeEvent(buf[i]) for i in range(written.value)]
 
     def close(self):
         if getattr(self, "_handle", None):

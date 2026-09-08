@@ -1,14 +1,19 @@
 #include "api/inferno.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
 #include "checker/checker.hpp"
+#include "checker/mip_checker.hpp"
 #include "core/lp_problem.hpp"
+#include "core/mip_problem.hpp"
 #include "core/sparse.hpp"
 #include "io/mps_reader.hpp"
+#include "mip/branch_and_bound.hpp"
 #include "presolve/presolve.hpp"
 #include "simplex/revised_simplex.hpp"
 
@@ -21,6 +26,20 @@ struct inferno_problem {
   inferno::core::Solution solution;
   bool solved = false;
   bool checker_passed = false;
+
+  // MILP state. is_integer stays empty for a pure LP.
+  std::vector<char> is_integer;
+  inferno::core::MipSolution mip;
+  bool mip_solved = false;
+  double solve_seconds = 0.0;
+
+  // The event log, and the one piece of shared state in this ABI. A
+  // caller observing a solve live reads it from another thread while the
+  // search writes it, so both sides take this lock. It is deliberately
+  // NOT a general concurrency story: only the two event accessors and the
+  // solve callback touch it.
+  mutable std::mutex event_mutex;
+  std::vector<inferno_node_event> events;
 };
 
 namespace {
@@ -34,9 +53,177 @@ double FromApiBound(double v) {
   return v;
 }
 
+// The inverse: the search legitimately produces IEEE infinities (no
+// incumbent yet, no bound yet), and a C caller in another language may
+// not be able to represent those. They cross the boundary as the same
+// large finite sentinel every bound uses.
+double ToApiBound(double v) {
+  if (std::isnan(v)) return INFERNO_INFINITY;
+  if (v >= INFERNO_INFINITY || std::isinf(v)) return v > 0 ? INFERNO_INFINITY : -INFERNO_INFINITY;
+  if (v <= -INFERNO_INFINITY) return -INFERNO_INFINITY;
+  return v;
+}
+
 }  // namespace
 
 extern "C" {
+
+inferno_status inferno_problem_set_integer(inferno_problem* p, const int* flags, int count) {
+  if (p == nullptr) return INFERNO_STATUS_INVALID_ARGUMENT;
+  if (flags == nullptr) {
+    p->is_integer.clear();
+    p->mip_solved = false;
+    return INFERNO_STATUS_OK;
+  }
+  if (count != p->lp.num_cols) return INFERNO_STATUS_INVALID_ARGUMENT;
+  try {
+    p->is_integer.assign(static_cast<size_t>(count), 0);
+    for (int j = 0; j < count; ++j) p->is_integer[static_cast<size_t>(j)] = flags[j] ? 1 : 0;
+    p->mip_solved = false;
+    return INFERNO_STATUS_OK;
+  } catch (...) {
+    return INFERNO_STATUS_INTERNAL_ERROR;
+  }
+}
+
+inferno_status inferno_solve_mip(inferno_problem* p, double time_limit_seconds, int node_limit,
+                                  double gap_tolerance, int presolve) {
+  if (p == nullptr) return INFERNO_STATUS_INVALID_ARGUMENT;
+  if (!(time_limit_seconds > 0.0) || node_limit <= 0) return INFERNO_STATUS_INVALID_ARGUMENT;
+  if (!(gap_tolerance >= 0.0)) return INFERNO_STATUS_INVALID_ARGUMENT;
+  try {
+    {
+      std::lock_guard<std::mutex> lock(p->event_mutex);
+      p->events.clear();
+    }
+    p->mip_solved = false;
+    p->solved = false;
+
+    inferno::core::MipProblem problem;
+    problem.lp = p->lp;
+    problem.is_integer = p->is_integer;
+    if (problem.is_integer.empty()) {
+      problem.is_integer.assign(static_cast<size_t>(p->lp.num_cols), 0);
+    }
+
+    inferno::mip::BranchAndBoundOptions opts;
+    opts.time_limit_seconds = time_limit_seconds;
+    opts.node_limit = node_limit;
+    opts.gap_tolerance = gap_tolerance;
+    opts.use_presolve = presolve != 0;
+    opts.node_callback = [p](const inferno::mip::NodeEvent& ev) {
+      inferno_node_event out;
+      out.node_index = ev.node_index;
+      out.depth = ev.depth;
+      out.branch_var = ev.branch_var;
+      out.branch_value = ev.branch_value;
+      out.node_bound = ToApiBound(ev.node_bound);
+      out.incumbent = ToApiBound(ev.incumbent);
+      out.best_bound = ToApiBound(ev.best_bound);
+      out.outcome = static_cast<int>(ev.outcome);
+      out.elapsed_seconds = ev.elapsed_seconds;
+      out.open_nodes = ev.open_nodes;
+      std::lock_guard<std::mutex> lock(p->event_mutex);
+      p->events.push_back(out);
+    };
+
+    const auto t0 = std::chrono::steady_clock::now();
+    p->mip = inferno::mip::SolveMip(problem, opts);
+    p->solve_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+
+    // Standing rule 2 again, at the MILP level: the independent MILP
+    // checker decides whether this answer is acceptable, not the search
+    // that produced it.
+    p->checker_passed = false;
+    if (p->mip.status == inferno::core::SolveStatus::kOptimal) {
+      p->checker_passed = inferno::checker::VerifyMipSolution(problem, p->mip).passed;
+    }
+
+    // Mirror into the LP-shaped result so every existing accessor
+    // (status, objective, solution vector) keeps working unchanged.
+    p->solution = inferno::core::Solution{};
+    p->solution.status = p->mip.status;
+    p->solution.x = p->mip.x;
+    p->solution.objective_value = p->mip.objective_value;
+    p->solution.iterations = p->mip.nodes_explored;
+    p->solved = true;
+    p->mip_solved = true;
+    return INFERNO_STATUS_OK;
+  } catch (...) {
+    return INFERNO_STATUS_INTERNAL_ERROR;
+  }
+}
+
+inferno_status inferno_get_best_bound(const inferno_problem* p, double* out) {
+  if (p == nullptr || out == nullptr) return INFERNO_STATUS_INVALID_ARGUMENT;
+  if (!p->mip_solved) return INFERNO_STATUS_NOT_SOLVED;
+  *out = ToApiBound(p->mip.best_bound);
+  return INFERNO_STATUS_OK;
+}
+
+inferno_status inferno_get_gap(const inferno_problem* p, double* out) {
+  if (p == nullptr || out == nullptr) return INFERNO_STATUS_INVALID_ARGUMENT;
+  if (!p->mip_solved) return INFERNO_STATUS_NOT_SOLVED;
+  *out = ToApiBound(p->mip.gap);
+  return INFERNO_STATUS_OK;
+}
+
+inferno_status inferno_get_nodes_explored(const inferno_problem* p, int* out) {
+  if (p == nullptr || out == nullptr) return INFERNO_STATUS_INVALID_ARGUMENT;
+  if (!p->mip_solved) return INFERNO_STATUS_NOT_SOLVED;
+  *out = p->mip.nodes_explored;
+  return INFERNO_STATUS_OK;
+}
+
+inferno_status inferno_get_proved_optimal(const inferno_problem* p, int* out) {
+  if (p == nullptr || out == nullptr) return INFERNO_STATUS_INVALID_ARGUMENT;
+  if (!p->mip_solved) return INFERNO_STATUS_NOT_SOLVED;
+  *out = p->mip.proved_optimal ? 1 : 0;
+  return INFERNO_STATUS_OK;
+}
+
+inferno_status inferno_get_solve_seconds(const inferno_problem* p, double* out) {
+  if (p == nullptr || out == nullptr) return INFERNO_STATUS_INVALID_ARGUMENT;
+  if (!p->solved) return INFERNO_STATUS_NOT_SOLVED;
+  *out = p->solve_seconds;
+  return INFERNO_STATUS_OK;
+}
+
+inferno_status inferno_get_event_count(const inferno_problem* p, int* out) {
+  if (p == nullptr || out == nullptr) return INFERNO_STATUS_INVALID_ARGUMENT;
+  std::lock_guard<std::mutex> lock(p->event_mutex);
+  *out = static_cast<int>(p->events.size());
+  return INFERNO_STATUS_OK;
+}
+
+inferno_status inferno_get_events(const inferno_problem* p, inferno_node_event* out, int start,
+                                   int count, int* written) {
+  if (p == nullptr || out == nullptr || written == nullptr) return INFERNO_STATUS_INVALID_ARGUMENT;
+  if (start < 0 || count < 0) return INFERNO_STATUS_INVALID_ARGUMENT;
+  std::lock_guard<std::mutex> lock(p->event_mutex);
+  const int have = static_cast<int>(p->events.size());
+  int n = 0;
+  while (n < count && start + n < have) {
+    out[n] = p->events[static_cast<size_t>(start + n)];
+    ++n;
+  }
+  *written = n;
+  return INFERNO_STATUS_OK;
+}
+
+const char* inferno_node_outcome_string(int outcome) {
+  switch (outcome) {
+    case INFERNO_NODE_ROOT: return "root";
+    case INFERNO_NODE_BRANCHED: return "branched";
+    case INFERNO_NODE_INTEGER_FEASIBLE: return "integer";
+    case INFERNO_NODE_INFEASIBLE: return "infeasible";
+    case INFERNO_NODE_DOMINATED: return "dominated";
+    case INFERNO_NODE_GAP_CUT: return "gap-cut";
+    case INFERNO_NODE_RELAXATION_FAILED: return "unresolved";
+  }
+  return "unknown";
+}
 
 inferno_problem* inferno_problem_create(void) {
   // Nothing here may throw into the caller, and operator new can.
@@ -55,6 +242,8 @@ inferno_status inferno_problem_load_mps(inferno_problem* p, const char* path) {
     inferno::core::LpProblem parsed = inferno::io::ReadMps(path);
     p->lp = std::move(parsed);  // only on success, so a failed read leaves p untouched
     p->solved = false;
+    p->mip_solved = false;
+    p->is_integer.clear();
     return INFERNO_STATUS_OK;
   } catch (const std::exception&) {
     return INFERNO_STATUS_READ_FAILED;
@@ -115,6 +304,8 @@ inferno_status inferno_problem_set(inferno_problem* p, int num_rows, int num_col
 
     p->lp = std::move(lp);
     p->solved = false;
+    p->mip_solved = false;
+    p->is_integer.clear();
     return INFERNO_STATUS_OK;
   } catch (...) {
     return INFERNO_STATUS_INTERNAL_ERROR;
@@ -124,6 +315,8 @@ inferno_status inferno_problem_set(inferno_problem* p, int num_rows, int num_col
 inferno_status inferno_solve(inferno_problem* p, int presolve) {
   if (p == nullptr) return INFERNO_STATUS_INVALID_ARGUMENT;
   try {
+    p->mip_solved = false;
+    const auto t0 = std::chrono::steady_clock::now();
     if (presolve) {
       auto pre = inferno::presolve::Presolve(p->lp);
       if (pre.infeasible) {
@@ -144,6 +337,8 @@ inferno_status inferno_solve(inferno_problem* p, int presolve) {
     if (p->solution.status == inferno::core::SolveStatus::kOptimal) {
       p->checker_passed = inferno::checker::VerifySolution(p->lp, p->solution).passed;
     }
+    p->solve_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     p->solved = true;
     return INFERNO_STATUS_OK;
   } catch (...) {
@@ -226,6 +421,6 @@ const char* inferno_status_string(inferno_status s) {
   return "unknown status";
 }
 
-const char* inferno_version(void) { return "0.5.0"; }
+const char* inferno_version(void) { return "0.6.0"; }
 
 }  // extern "C"

@@ -1,0 +1,1546 @@
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inferno Copilot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  /* ---- Design plan ----
+     Same visual world as dashboard/index.html, because this is the same
+     instrument: soot/graphite ground, molten flame accent, steel for the
+     cool instrument readouts. Deliberately NOT a chat-app look — the
+     conversation is one input rail on a control panel, not the product.
+     Type: Big Shoulders Display (condensed headings), IBM Plex Sans (UI),
+     IBM Plex Mono (every number, so digits align in columns).
+     Layout: fixed two-pane console — conversation rail left, model and
+     solver workspace right, with a live instrument strip above the tabs.
+     Every font stack has a real fallback: this page must render correctly
+     with no network at all. */
+  :root {
+    --ink: #16130f;
+    --surface: #1e1912;
+    --surface-2: #262019;
+    --surface-3: #2e2720;
+    --rail: #3a3226;
+    --ember: #ff6a1f;
+    --ember-dim: #a8481a;
+    --molten: #ffb238;
+    --steel: #6fa3c4;
+    --steel-dim: #3f5a6b;
+    --verified: #5cb37e;
+    --alert: #e2554a;
+    --warn: #d9a441;
+    --text: #f3ece0;
+    --text-dim: #b7a998;
+    --text-faint: #7d7365;
+    --font-display: "Big Shoulders Display", "Arial Narrow", "Helvetica Neue", sans-serif;
+    --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--ink); color: var(--text);
+    font-family: var(--font-body); line-height: 1.5; font-size: 14px;
+    background-image:
+      radial-gradient(ellipse 900px 500px at 10% -10%, rgba(255,106,31,0.09), transparent 60%),
+      radial-gradient(ellipse 700px 500px at 100% 0%, rgba(111,163,196,0.06), transparent 60%);
+  }
+  ::selection { background: var(--ember); color: #1a1005; }
+  button, input, textarea, select { font-family: inherit; font-size: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--molten); outline-offset: 2px;
+  }
+
+  /* ---------- shell ---------- */
+  .shell { display: flex; flex-direction: column; height: 100vh; }
+  header.top {
+    display: flex; align-items: center; gap: 16px;
+    padding: 10px 20px; border-bottom: 1px solid var(--rail);
+    background: linear-gradient(180deg, var(--surface-2), var(--surface));
+    flex: 0 0 auto;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand h1 {
+    font-family: var(--font-display); font-size: 26px; letter-spacing: 0.04em;
+    margin: 0; text-transform: uppercase; font-weight: 800;
+  }
+  .brand h1 span { color: var(--ember); }
+  .brand .sub {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .top-spacer { flex: 1; }
+  .pill {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.05em;
+    padding: 4px 10px; border-radius: 999px; border: 1px solid var(--rail);
+    background: var(--surface-3); color: var(--text-dim); white-space: nowrap;
+  }
+  .pill.ok { border-color: var(--verified); color: var(--verified); }
+  .pill.off { border-color: var(--ember-dim); color: var(--molten); }
+  .pill a { color: inherit; text-decoration: none; }
+
+  main { display: flex; flex: 1; min-height: 0; }
+
+  /* ---------- conversation rail ---------- */
+  .rail {
+    width: 420px; flex: 0 0 420px; display: flex; flex-direction: column;
+    border-right: 1px solid var(--rail); background: var(--surface); min-height: 0;
+  }
+  .rail-head {
+    padding: 12px 16px 8px; border-bottom: 1px solid var(--rail);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .rail-head h2 {
+    font-family: var(--font-display); font-size: 17px; margin: 0;
+    text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700;
+  }
+  .stream { flex: 1; overflow-y: auto; padding: 14px 16px; min-height: 0; }
+  .msg { margin-bottom: 14px; }
+  .msg .who {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text-faint); margin-bottom: 4px;
+  }
+  .msg.user .bubble {
+    background: var(--surface-3); border: 1px solid var(--rail);
+    border-left: 2px solid var(--steel);
+  }
+  .msg.ai .bubble { background: var(--surface-2); border: 1px solid var(--rail);
+    border-left: 2px solid var(--ember); }
+  .msg.system .bubble { background: transparent; border: 1px dashed var(--rail);
+    color: var(--text-dim); }
+  .msg.error .bubble { background: rgba(226,85,74,0.09);
+    border: 1px solid var(--alert); border-left: 2px solid var(--alert); }
+  .msg.solver .bubble { background: rgba(92,179,126,0.07);
+    border: 1px solid var(--steel-dim); border-left: 2px solid var(--verified); }
+  .bubble { padding: 10px 12px; border-radius: 3px; white-space: pre-wrap;
+    word-wrap: break-word; overflow-wrap: anywhere; }
+  .bubble h1, .bubble h2, .bubble h3 { font-family: var(--font-display);
+    font-size: 15px; margin: 10px 0 4px; letter-spacing: 0.04em; }
+  .bubble code { font-family: var(--font-mono); font-size: 12px;
+    background: rgba(0,0,0,0.28); padding: 1px 4px; border-radius: 2px; }
+  .bubble strong { color: var(--molten); }
+  .bubble ul { margin: 6px 0; padding-left: 18px; }
+  .bubble table { border-collapse: collapse; font-family: var(--font-mono);
+    font-size: 12px; margin: 8px 0; }
+  .bubble td, .bubble th { border: 1px solid var(--rail); padding: 3px 8px;
+    text-align: right; font-variant-numeric: tabular-nums; }
+  .bubble th { color: var(--text-dim); font-weight: 500; }
+  .bubble td:first-child, .bubble th:first-child { text-align: left; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip {
+    font-size: 12px; padding: 4px 9px; border-radius: 999px;
+    border: 1px solid var(--steel-dim); background: transparent; color: var(--steel);
+  }
+  .chip:hover { border-color: var(--steel); background: rgba(111,163,196,0.10); }
+
+  .composer { border-top: 1px solid var(--rail); padding: 10px 12px; background: var(--surface-2); }
+  .composer textarea {
+    width: 100%; min-height: 62px; max-height: 180px; resize: vertical;
+    background: var(--ink); border: 1px solid var(--rail); border-radius: 3px;
+    padding: 9px 10px; color: var(--text);
+  }
+  .composer textarea::placeholder { color: var(--text-faint); }
+  .composer-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .btn {
+    padding: 7px 14px; border-radius: 3px; border: 1px solid var(--rail);
+    background: var(--surface-3); color: var(--text); font-weight: 500;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--text-faint); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn.primary { background: var(--ember); border-color: var(--ember); color: #1a1005;
+    font-weight: 600; }
+  .btn.primary:hover:not(:disabled) { background: var(--molten); border-color: var(--molten); }
+  .btn.ghost { background: transparent; }
+  .btn.small { padding: 4px 10px; font-size: 12px; }
+
+  /* ---------- workspace ---------- */
+  .work { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .instruments {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+    gap: 1px; background: var(--rail); border-bottom: 1px solid var(--rail); flex: 0 0 auto;
+  }
+  .gauge { background: var(--surface); padding: 9px 13px; }
+  .gauge .k {
+    font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.11em;
+    text-transform: uppercase; color: var(--text-faint); white-space: nowrap;
+  }
+  .gauge .v {
+    font-family: var(--font-mono); font-size: 17px; font-weight: 500;
+    font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .gauge .v.dim { color: var(--text-faint); }
+  .gauge .v.hot { color: var(--molten); }
+  .gauge .v.cool { color: var(--steel); }
+  .gauge .v.good { color: var(--verified); }
+  .gauge .v.bad { color: var(--alert); }
+
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--rail);
+    background: var(--surface-2); flex: 0 0 auto; overflow-x: auto; }
+  .tab {
+    padding: 9px 16px; background: transparent; border: none;
+    border-bottom: 2px solid transparent; color: var(--text-faint);
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em;
+    text-transform: uppercase; white-space: nowrap;
+  }
+  .tab:hover { color: var(--text-dim); }
+  .tab[aria-selected="true"] { color: var(--ember); border-bottom-color: var(--ember); }
+  .tab .badge { color: var(--text-faint); margin-left: 5px; font-size: 10px; }
+
+  .panels { flex: 1; overflow: auto; min-height: 0; }
+  .panel { display: none; padding: 18px 22px 40px; }
+  .panel.active { display: block; }
+  .panel h3 {
+    font-family: var(--font-display); font-size: 16px; text-transform: uppercase;
+    letter-spacing: 0.07em; margin: 0 0 10px; color: var(--text-dim); font-weight: 700;
+  }
+  .panel h3:not(:first-child) { margin-top: 26px; }
+  .empty { color: var(--text-faint); font-style: italic; padding: 30px 0; }
+
+  pre.math {
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.65;
+    background: var(--surface); border: 1px solid var(--rail); border-left: 2px solid var(--ember);
+    padding: 14px 16px; border-radius: 3px; overflow-x: auto; margin: 0;
+  }
+  pre.math .kw { color: var(--ember); font-weight: 600; }
+  pre.math .nm { color: var(--steel); }
+  pre.math .num { color: var(--molten); }
+  pre.math .op { color: var(--text-faint); }
+
+  table.data { width: 100%; border-collapse: collapse; font-family: var(--font-mono);
+    font-size: 12.5px; }
+  table.data th {
+    text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--rail);
+    color: var(--text-faint); font-weight: 500; font-size: 10px; letter-spacing: 0.09em;
+    text-transform: uppercase; position: sticky; top: 0; background: var(--ink);
+  }
+  table.data td { padding: 6px 10px; border-bottom: 1px solid rgba(58,50,38,0.5);
+    font-variant-numeric: tabular-nums; }
+  table.data td.num { text-align: right; }
+  table.data tr:hover td { background: var(--surface); }
+  .tag { font-size: 10px; padding: 1px 6px; border-radius: 2px; border: 1px solid var(--rail);
+    color: var(--text-dim); letter-spacing: 0.05em; }
+  .tag.bin { border-color: var(--ember-dim); color: var(--molten); }
+  .tag.int { border-color: var(--steel-dim); color: var(--steel); }
+  .tag.bind { border-color: var(--verified); color: var(--verified); }
+
+  .filterbar { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+  .filterbar input {
+    flex: 1; max-width: 320px; background: var(--surface); border: 1px solid var(--rail);
+    border-radius: 3px; padding: 5px 9px; font-family: var(--font-mono); font-size: 12px;
+  }
+  .count { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
+
+  .actions { display: flex; gap: 8px; margin: 14px 0 0; flex-wrap: wrap; }
+  .notice {
+    border: 1px solid var(--rail); border-left: 2px solid var(--warn);
+    background: rgba(217,164,65,0.07); padding: 11px 14px; border-radius: 3px;
+    margin-bottom: 14px;
+  }
+  .notice.bad { border-left-color: var(--alert); background: rgba(226,85,74,0.08); }
+  .notice.good { border-left-color: var(--verified); background: rgba(92,179,126,0.07); }
+  .notice h4 { margin: 0 0 4px; font-family: var(--font-display); font-size: 15px;
+    letter-spacing: 0.05em; text-transform: uppercase; }
+  .notice ul { margin: 6px 0 0; padding-left: 18px; font-family: var(--font-mono);
+    font-size: 12px; }
+
+  textarea.editor {
+    width: 100%; min-height: 380px; background: var(--ink); border: 1px solid var(--rail);
+    border-radius: 3px; padding: 12px; font-family: var(--font-mono); font-size: 12.5px;
+    line-height: 1.55; resize: vertical;
+  }
+
+  .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .chart { background: var(--surface); border: 1px solid var(--rail); border-radius: 3px;
+    padding: 12px 14px 8px; }
+  .chart .title { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.09em;
+    text-transform: uppercase; color: var(--text-faint); margin-bottom: 8px; }
+  .chart canvas { width: 100%; height: 170px; display: block; }
+  .legend { display: flex; gap: 14px; margin-top: 6px; font-family: var(--font-mono);
+    font-size: 10.5px; color: var(--text-faint); flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle;
+    margin-right: 5px; }
+
+  .treewrap { overflow: auto; background: var(--surface); border: 1px solid var(--rail);
+    border-radius: 3px; }
+  .log { font-family: var(--font-mono); font-size: 11.5px; max-height: 320px; overflow-y: auto;
+    background: var(--ink); border: 1px solid var(--rail); border-radius: 3px; padding: 10px 12px; }
+  .log div { white-space: pre; color: var(--text-dim); }
+  .log .c { color: var(--molten); }
+  .log .g { color: var(--verified); }
+  .log .r { color: var(--alert); }
+
+  .examples { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 10px; }
+  .ex {
+    text-align: left; background: var(--surface); border: 1px solid var(--rail);
+    border-radius: 3px; padding: 11px 13px; display: block; width: 100%;
+  }
+  .ex:hover { border-color: var(--ember-dim); background: var(--surface-2); }
+  .ex .lv { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.09em;
+    text-transform: uppercase; color: var(--ember); }
+  .ex .ti { font-family: var(--font-display); font-size: 17px; letter-spacing: 0.03em;
+    margin: 2px 0 3px; font-weight: 700; }
+  .ex .de { font-size: 12px; color: var(--text-dim); line-height: 1.4; }
+
+  .cmp { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 13px; }
+  .cmp th, .cmp td { padding: 7px 12px; border-bottom: 1px solid var(--rail);
+    font-variant-numeric: tabular-nums; text-align: right; }
+  .cmp th:first-child, .cmp td:first-child { text-align: left; color: var(--text-dim); }
+  .cmp .delta.up { color: var(--alert); }
+  .cmp .delta.down { color: var(--verified); }
+
+  .spin { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--ember); animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 0.25; transform: scale(0.8); }
+                     50% { opacity: 1; transform: scale(1.15); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; opacity: 1; } }
+
+  @media (max-width: 960px) {
+    main { flex-direction: column; }
+    .rail { width: auto; flex: 0 0 46vh; border-right: none; border-bottom: 1px solid var(--rail); }
+  }
+</style>
+
+<div class="shell">
+  <header class="top">
+    <div class="brand">
+      <h1>Infer<span>no</span> Copilot</h1>
+      <span class="sub">SIH 2026 · PS 26119 · MRPL</span>
+    </div>
+    <div class="top-spacer"></div>
+    <span class="pill" id="pill-solver">solver …</span>
+    <span class="pill" id="pill-ai">ai …</span>
+    <span class="pill"><a href="index.html">console</a></span>
+    <span class="pill"><a href="report.html">benchmark</a></span>
+  </header>
+
+  <main>
+    <section class="rail">
+      <div class="rail-head">
+        <h2>Conversation</h2>
+        <div class="top-spacer"></div>
+        <button class="btn ghost small" id="btn-reset">Reset</button>
+      </div>
+      <div class="stream" id="stream"></div>
+      <div class="composer">
+        <textarea id="input" placeholder="Describe an optimization problem in plain English…&#10;e.g. I have 3 plants. Plant A costs ₹50,000 to open and makes 500 units…"></textarea>
+        <div class="composer-row">
+          <button class="btn primary" id="btn-send">Ask Inferno AI</button>
+          <button class="btn ghost small" id="btn-examples">Load example</button>
+          <div class="top-spacer"></div>
+          <span class="count" id="chat-state"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="work">
+      <div class="instruments" id="instruments"></div>
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <div class="panels" id="panels"></div>
+    </section>
+  </main>
+</div>
+
+<script>
+"use strict";
+/* Everything below runs with no network beyond this origin. No CDN, no
+   framework, no chart library: the offline requirement is not a mode this
+   page falls back into, it is how the page is built. */
+
+const API = {
+  async get(path) {
+    const r = await fetch(path, { headers: { "Accept": "application/json" } });
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+  },
+  async post(path, payload) {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+  },
+};
+
+const S = {
+  session: "s" + Math.random().toString(36).slice(2, 10),
+  aiEnabled: false,
+  aiReason: "",
+  model: null,
+  result: null,
+  previous: null,
+  previousLabel: "",
+  events: [],
+  runId: null,
+  polling: null,
+  editing: false,
+  examples: [],
+  tab: "chat-start",
+};
+
+/* ---------- tiny helpers ---------- */
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+const fmt = (v, digits) => {
+  if (v === null || v === undefined || !isFinite(v)) return "—";
+  const d = digits === undefined ? 4 : digits;
+  const a = Math.abs(v);
+  if (a !== 0 && (a >= 1e9 || a < 1e-4)) return v.toExponential(3);
+  return v.toLocaleString(undefined, { maximumFractionDigits: d });
+};
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* Markdown-ish rendering, deliberately minimal. It handles bold, inline
+   code, headings and lists; everything else stays literal text. Escaping
+   happens FIRST, so nothing an AI returns can inject markup. */
+function renderMarkdown(text) {
+  let h = esc(text);
+  h = h.replace(/```[\s\S]*?```/g, (m) =>
+    "<pre class=\"math\">" + m.replace(/```(\w*\n?)?/g, "") + "</pre>");
+  h = h.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  h = h.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  h = h.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+  h = h.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+  h = h.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+  h = h.replace(/^[-*] (.+)$/gm, "<li>$1</li>");
+  h = h.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, "<ul>$1</ul>");
+  return h;
+}
+
+/* ---------- conversation ---------- */
+function say(kind, who, text, opts) {
+  const wrap = el("div", "msg " + kind);
+  wrap.appendChild(el("div", "who", who));
+  const bubble = el("div", "bubble");
+  if (opts && opts.markdown) bubble.innerHTML = renderMarkdown(text);
+  else bubble.textContent = text;
+  wrap.appendChild(bubble);
+  if (opts && opts.chips) {
+    const chips = el("div", "chips");
+    opts.chips.forEach(([label, fn]) => {
+      const b = el("button", "chip", label);
+      b.addEventListener("click", fn);
+      chips.appendChild(b);
+    });
+    bubble.appendChild(chips);
+  }
+  $("stream").appendChild(wrap);
+  $("stream").scrollTop = $("stream").scrollHeight;
+  return wrap;
+}
+
+function busy(text) {
+  const wrap = el("div", "msg system");
+  wrap.appendChild(el("div", "who", "working"));
+  const bubble = el("div", "bubble");
+  bubble.appendChild(el("span", "spin"));
+  bubble.appendChild(document.createTextNode(" " + text));
+  wrap.appendChild(bubble);
+  $("stream").appendChild(wrap);
+  $("stream").scrollTop = $("stream").scrollHeight;
+  return () => wrap.remove();
+}
+
+/* ---------- instrument strip ---------- */
+/* Every value here is copied from a solver response. There is no field in
+   this function that is computed from an estimate, and none of it is ever
+   written by the language model. */
+function renderInstruments() {
+  const box = $("instruments");
+  box.textContent = "";
+  const r = S.result;
+  const live = S.events.length ? S.events[S.events.length - 1] : null;
+  const solving = S.runId !== null && !r;
+
+  const gauges = [];
+  if (!S.model) {
+    gauges.push(["state", "no model", "dim"]);
+  } else if (solving) {
+    gauges.push(["state", "SOLVING…", "hot"]);
+  } else if (r) {
+    gauges.push(["status", r.status, r.status === "OPTIMAL" ? "good" : "bad"]);
+  } else {
+    gauges.push(["state", "ready", "cool"]);
+  }
+
+  const root = S.events.length ? S.events[0].node_bound : null;
+  if (S.model) gauges.push(["root lp bound", fmt(signed(root)), "cool"]);
+
+  if (r) {
+    gauges.push(["objective", fmt(r.objective), "hot"]);
+    if (r.is_mip) {
+      gauges.push([r.bound_is_upper ? "best bound ↑" : "best bound ↓", fmt(r.best_bound), "cool"]);
+      gauges.push(["gap", r.gap === null ? "—" : (r.gap * 100).toFixed(4) + " %",
+        r.proved_optimal ? "good" : "hot"]);
+      gauges.push(["nodes", String(r.nodes), ""]);
+      gauges.push(["proved optimal", r.proved_optimal ? "YES" : "NO",
+        r.proved_optimal ? "good" : "bad"]);
+    } else {
+      gauges.push(["iterations", String(r.iterations), ""]);
+    }
+    gauges.push(["runtime", (r.solver_seconds !== undefined ? r.solver_seconds : r.seconds)
+      .toFixed(3) + " s", ""]);
+    gauges.push(["independent checker", r.checker_passed ? "PASS" : "FAIL",
+      r.checker_passed ? "good" : "bad"]);
+  } else if (live) {
+    gauges.push(["incumbent", fmt(signed(live.incumbent)), "hot"]);
+    gauges.push(["best bound", fmt(signed(live.best_bound)), "cool"]);
+    gauges.push(["nodes", String(live.node), ""]);
+    gauges.push(["open nodes", String(live.open_nodes), ""]);
+    gauges.push(["runtime", live.elapsed.toFixed(2) + " s", ""]);
+  }
+
+  gauges.forEach(([k, v, cls]) => {
+    const g = el("div", "gauge");
+    g.appendChild(el("div", "k", k));
+    g.appendChild(el("div", "v " + (cls || ""), v));
+    box.appendChild(g);
+  });
+}
+
+/* The solver always minimizes internally; a maximization was negated on
+   the way in. Live event bounds therefore need the same sign restoration
+   the final result already got on the server. */
+function signed(v) {
+  if (v === null || v === undefined) return null;
+  if (!isFinite(v)) return v;
+  if (!S.model) return v;
+  const offset = S.model.objective_offset || 0;
+  return S.model.objective_sense === "maximize" ? -v + offset : v + offset;
+}
+
+/* ---------- tabs ---------- */
+const TABS = [
+  { id: "model", label: "Model" },
+  { id: "variables", label: "Variables" },
+  { id: "constraints", label: "Constraints" },
+  { id: "objective", label: "Objective" },
+  { id: "solver", label: "Solver" },
+  { id: "tree", label: "Tree" },
+  { id: "charts", label: "Charts" },
+  { id: "compare", label: "Compare" },
+  { id: "logs", label: "Logs" },
+];
+
+function buildTabs() {
+  const bar = $("tabs"), panels = $("panels");
+  bar.textContent = ""; panels.textContent = "";
+  TABS.forEach((t, i) => {
+    const b = el("button", "tab");
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", i === 0 ? "true" : "false");
+    b.dataset.tab = t.id;
+    b.appendChild(document.createTextNode(t.label));
+    const badge = el("span", "badge", "");
+    badge.id = "badge-" + t.id;
+    b.appendChild(badge);
+    b.addEventListener("click", () => selectTab(t.id));
+    bar.appendChild(b);
+    const p = el("div", "panel" + (i === 0 ? " active" : ""));
+    p.id = "panel-" + t.id;
+    panels.appendChild(p);
+  });
+  S.tab = TABS[0].id;
+}
+
+function selectTab(id) {
+  S.tab = id;
+  document.querySelectorAll(".tab").forEach((b) =>
+    b.setAttribute("aria-selected", b.dataset.tab === id ? "true" : "false"));
+  document.querySelectorAll(".panel").forEach((p) =>
+    p.classList.toggle("active", p.id === "panel-" + id));
+  renderPanel(id);
+}
+
+function badge(id, text) {
+  const b = $("badge-" + id);
+  if (b) b.textContent = text ? " " + text : "";
+}
+
+/* ---------- panels ---------- */
+function renderAll() {
+  renderInstruments();
+  TABS.forEach((t) => { if (t.id === S.tab) renderPanel(t.id); });
+  badge("variables", S.model ? String(S.model.variables.length) : "");
+  badge("constraints", S.model ? String(S.model.constraints.length) : "");
+  badge("tree", S.events.length ? String(S.events.length) : "");
+}
+
+function renderPanel(id) {
+  const p = $("panel-" + id);
+  if (!p) return;
+  p.textContent = "";
+  ({
+    model: panelModel, variables: panelVariables, constraints: panelConstraints,
+    objective: panelObjective, solver: panelSolver, tree: panelTree,
+    charts: panelCharts, compare: panelCompare, logs: panelLogs,
+  }[id] || (() => {}))(p);
+}
+
+/* Single pass, and that is the whole point. The previous version escaped
+   the text and then ran three successive .replace() calls over the result
+   — so the third pass matched the `=` inside the `class="kw"` attributes
+   the first pass had just inserted, and the page rendered raw `="kw">`
+   markup as if it were part of the model. Matching once and escaping each
+   chunk as it is emitted means inserted markup is never re-scanned. */
+function highlightMath(text) {
+  const re = /(?:^(Minimize|Maximize|subject to|bounds))|(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)|([A-Za-z_][A-Za-z0-9_.\-]*)|(<=|>=|=)/gm;
+  let out = "", last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    out += esc(text.slice(last, m.index));
+    const cls = m[1] ? "kw" : m[2] ? "num" : m[3] ? "nm" : "op";
+    out += '<span class="' + cls + '">' + esc(m[0]) + "</span>";
+    last = m.index + m[0].length;
+    if (re.lastIndex === m.index) re.lastIndex++;  // never spin on an empty match
+  }
+  out += esc(text.slice(last));
+  return out;
+}
+
+function panelModel(p) {
+  if (!S.model) {
+    p.appendChild(startCard());
+    return;
+  }
+  if (S.editing) {
+    p.appendChild(el("h3", null, "Edit model"));
+    const note = el("div", "notice");
+    note.appendChild(el("h4", null, "Edited models are re-validated"));
+    note.appendChild(el("div", null,
+      "The same deterministic validator runs on this JSON before the solver sees it. "
+      + "An edit is exactly as untrusted as an AI-generated model."));
+    p.appendChild(note);
+    const ta = el("textarea", "editor");
+    ta.id = "model-editor";
+    ta.value = JSON.stringify(S.model, null, 2);
+    p.appendChild(ta);
+    const acts = el("div", "actions");
+    acts.appendChild(button("Validate & apply", "primary", applyEdit));
+    acts.appendChild(button("Cancel", "ghost", () => { S.editing = false; renderPanel("model"); }));
+    p.appendChild(acts);
+    return;
+  }
+
+  p.appendChild(el("h3", null, "Model ready — " + S.model.name));
+  const pre = el("pre", "math");
+  pre.innerHTML = highlightMath(S.model.__preview || "");
+  p.appendChild(pre);
+
+  const acts = el("div", "actions");
+  acts.appendChild(button("Run Inferno", "primary", runSolve, S.runId !== null));
+  acts.appendChild(button("Edit model", "ghost", () => { S.editing = true; renderPanel("model"); }));
+  acts.appendChild(button("Explain result", "ghost", () => explain(),
+    !S.result || !S.aiEnabled));
+  acts.appendChild(button("Download JSON", "ghost", downloadModel));
+  p.appendChild(acts);
+
+  const stats = el("div", "count");
+  const bins = S.model.variables.filter((v) => v.type === "binary").length;
+  const ints = S.model.variables.filter((v) => v.type === "integer").length;
+  stats.style.marginTop = "12px";
+  stats.textContent = `${S.model.variables.length} variables `
+    + `(${bins} binary, ${ints} general integer, `
+    + `${S.model.variables.length - bins - ints} continuous) · `
+    + `${S.model.constraints.length} constraints · `
+    + (bins + ints > 0 ? "MILP — branch-and-bound" : "LP — revised simplex");
+  p.appendChild(stats);
+}
+
+function startCard() {
+  const box = el("div");
+  const note = el("div", "notice" + (S.aiEnabled ? " good" : ""));
+  note.appendChild(el("h4", null, S.aiEnabled ? "AI copilot online" : "AI assistant unavailable"));
+  note.appendChild(el("div", null, S.aiEnabled
+    ? "Describe a problem on the left and the AI will formulate it. Every model is "
+      + "validated before Inferno runs, and every number you see comes from Inferno."
+    : (S.aiReason || "OPENROUTER_API_KEY not configured")
+      + ". You can still use Inferno: load an example, edit the model, and solve."));
+  box.appendChild(note);
+  box.appendChild(el("h3", null, "Load an example"));
+  const grid = el("div", "examples");
+  S.examples.forEach((ex) => {
+    const b = el("button", "ex");
+    b.appendChild(el("div", "lv", ex.level));
+    b.appendChild(el("div", "ti", ex.title));
+    b.appendChild(el("div", "de", ex.prompt));
+    b.addEventListener("click", () => loadExample(ex.id, ex.title));
+    grid.appendChild(b);
+  });
+  box.appendChild(grid);
+  return box;
+}
+
+function button(label, cls, fn, disabled) {
+  const b = el("button", "btn " + (cls || ""), label);
+  if (disabled) b.disabled = true;
+  b.addEventListener("click", fn);
+  return b;
+}
+
+function filterTable(p, placeholder, rows, build) {
+  const bar = el("div", "filterbar");
+  const input = el("input");
+  input.type = "search";
+  input.placeholder = placeholder;
+  const count = el("span", "count", rows.length + " rows");
+  bar.appendChild(input); bar.appendChild(count);
+  p.appendChild(bar);
+  const host = el("div");
+  p.appendChild(host);
+  const draw = () => {
+    const q = input.value.trim().toLowerCase();
+    const shown = q ? rows.filter((r) => JSON.stringify(r).toLowerCase().includes(q)) : rows;
+    count.textContent = shown.length + (q ? " of " + rows.length : "") + " rows";
+    host.textContent = "";
+    host.appendChild(build(shown));
+  };
+  input.addEventListener("input", draw);
+  draw();
+}
+
+function table(headers, rows) {
+  const t = el("table", "data");
+  const thead = el("thead"), tr = el("tr");
+  headers.forEach((h) => tr.appendChild(el("th", null, h)));
+  thead.appendChild(tr); t.appendChild(thead);
+  const tb = el("tbody");
+  rows.forEach((cells) => {
+    const r = el("tr");
+    cells.forEach((c) => {
+      const td = el("td");
+      if (c && c.node) { td.appendChild(c.node); if (c.cls) td.className = c.cls; }
+      else if (c && typeof c === "object") { td.textContent = c.text; td.className = c.cls || ""; }
+      else td.textContent = c;
+      r.appendChild(td);
+    });
+    tb.appendChild(r);
+  });
+  t.appendChild(tb);
+  return t;
+}
+
+function panelVariables(p) {
+  if (!S.model) { p.appendChild(el("div", "empty", "No model yet.")); return; }
+  const values = {};
+  if (S.result && S.result.variables) S.result.variables.forEach((v) => { values[v.name] = v.value; });
+  const rows = S.model.variables.map((v) => {
+    const tag = el("span", "tag " + (v.type === "binary" ? "bin" : v.type === "integer" ? "int" : ""),
+      v.type);
+    return [
+      v.name,
+      { node: tag },
+      { text: fmt(v.lower_bound), cls: "num" },
+      { text: v.upper_bound === null || !isFinite(v.upper_bound) ? "∞" : fmt(v.upper_bound),
+        cls: "num" },
+      { text: values[v.name] === undefined ? "—" : fmt(values[v.name], 6), cls: "num" },
+      v.description || "",
+    ];
+  });
+  p.appendChild(el("h3", null, "Variables"));
+  filterTable(p, "filter variables…", rows,
+    (shown) => table(["Name", "Type", "Lower", "Upper", "Value", "Meaning"], shown));
+}
+
+function panelConstraints(p) {
+  if (!S.model) { p.appendChild(el("div", "empty", "No model yet.")); return; }
+  const byName = {};
+  if (S.result && S.result.rows) S.result.rows.forEach((r) => { byName[r.name] = r; });
+  const rows = S.model.constraints.map((c) => {
+    const r = byName[c.name];
+    const bindTag = r && r.binding ? el("span", "tag bind", "binding") : el("span", "tag", "slack");
+    const expr = c.terms.map((t) => `${t.coefficient >= 0 ? "+" : "−"}${Math.abs(t.coefficient)}·${t.variable}`)
+      .join(" ").replace(/^\+/, "");
+    return [
+      c.name,
+      expr.length > 90 ? expr.slice(0, 90) + "…" : expr,
+      { text: c.lower_bound === null || !isFinite(c.lower_bound) ? "−∞" : fmt(c.lower_bound),
+        cls: "num" },
+      { text: c.upper_bound === null || !isFinite(c.upper_bound) ? "∞" : fmt(c.upper_bound),
+        cls: "num" },
+      { text: r ? fmt(r.activity, 6) : "—", cls: "num" },
+      { node: r ? bindTag : document.createTextNode("—") },
+      c.description || "",
+    ];
+  });
+  p.appendChild(el("h3", null, "Constraints"));
+  filterTable(p, "filter constraints…", rows,
+    (shown) => table(["Name", "Row", "Lower", "Upper", "Activity", "State", "Meaning"], shown));
+}
+
+function panelObjective(p) {
+  if (!S.model) { p.appendChild(el("div", "empty", "No model yet.")); return; }
+  p.appendChild(el("h3", null,
+    (S.model.objective_sense === "minimize" ? "Minimize" : "Maximize") + " — objective terms"));
+  const values = {};
+  if (S.result && S.result.variables) S.result.variables.forEach((v) => { values[v.name] = v.value; });
+  const rows = S.model.objective.slice()
+    .sort((a, b) => Math.abs(b.coefficient) - Math.abs(a.coefficient))
+    .map((t) => {
+      const x = values[t.variable];
+      return [
+        t.variable,
+        { text: fmt(t.coefficient), cls: "num" },
+        { text: x === undefined ? "—" : fmt(x, 6), cls: "num" },
+        { text: x === undefined ? "—" : fmt(t.coefficient * x, 4), cls: "num" },
+      ];
+    });
+  p.appendChild(table(["Variable", "Cost coefficient", "Value", "Contribution"], rows));
+  if (S.result && S.result.status === "OPTIMAL") {
+    const tot = el("div", "count");
+    tot.style.marginTop = "10px";
+    tot.textContent = "Inferno objective: " + fmt(S.result.objective, 6);
+    p.appendChild(tot);
+  }
+}
+
+function panelSolver(p) {
+  const r = S.result;
+  if (!r) {
+    p.appendChild(el("div", "empty",
+      S.runId ? "Solving — live progress is on the Tree and Charts tabs." : "No solve yet."));
+    return;
+  }
+  p.appendChild(el("h3", null, "Inferno result"));
+  const note = el("div", "notice " + (r.checker_passed ? "good" : "bad"));
+  note.appendChild(el("h4", null, r.checker_passed
+    ? "Independent checker: PASS" : "Independent checker did not pass"));
+  note.appendChild(el("div", null, r.checker_passed
+    ? "The answer was re-verified from the raw model by a checker that shares no code "
+      + "with the solver. Integrality, bounds, rows, objective and the reported bound "
+      + "were all recomputed."
+    : "The solver's answer was not accepted by the independent checker. Treat it as unverified."));
+  p.appendChild(note);
+
+  const rows = [["Status", r.status], ["Objective", fmt(r.objective, 8)],
+                ["Sense", r.objective_sense]];
+  if (r.is_mip) {
+    rows.push([r.bound_is_upper ? "Best bound (upper)" : "Best bound (lower)",
+      fmt(r.best_bound, 8)]);
+    rows.push(["Optimality gap", r.gap === null ? "—" : (r.gap * 100).toFixed(6) + " %"]);
+    rows.push(["Nodes explored", String(r.nodes)]);
+    rows.push(["Proved optimal", r.proved_optimal ? "yes" : "no — search stopped before proof"]);
+    rows.push(["Solver wall clock", r.solver_seconds.toFixed(4) + " s"]);
+  } else {
+    rows.push(["Simplex iterations", String(r.iterations)]);
+    rows.push(["Wall clock", r.seconds.toFixed(4) + " s"]);
+  }
+  rows.push(["Node events recorded", String(S.events.length)]);
+  p.appendChild(table(["Metric", "Value"], rows.map(([a, b]) => [a, { text: b, cls: "num" }])));
+
+  if (!r.is_mip && r.duals && r.duals.length) {
+    p.appendChild(el("h3", null, "Shadow prices"));
+    p.appendChild(table(["Constraint", "Dual"],
+      r.duals.filter((d) => Math.abs(d.dual) > 1e-9)
+        .map((d) => [d.name, { text: fmt(d.dual, 6), cls: "num" }])));
+  }
+  if (r.rows) {
+    p.appendChild(el("h3", null, "Binding constraints"));
+    const binding = r.rows.filter((x) => x.binding);
+    if (!binding.length) p.appendChild(el("div", "empty", "No constraint is tight at the optimum."));
+    else p.appendChild(table(["Constraint", "Activity", "Bound", "Meaning"],
+      binding.map((x) => [x.name, { text: fmt(x.activity, 6), cls: "num" },
+        { text: fmt(x.upper_bound !== null ? x.upper_bound : x.lower_bound, 6), cls: "num" },
+        x.description || ""])));
+  }
+}
+
+/* ---------- branch-and-bound tree, drawn from real events ---------- */
+function panelTree(p) {
+  if (!S.events.length) {
+    p.appendChild(el("div", "empty",
+      "No node events. Solve a MILP — an LP has no search tree."));
+    return;
+  }
+  p.appendChild(el("h3", null, "Search tree — " + S.events.length + " recorded node events"));
+  const note = el("div", "notice");
+  note.appendChild(el("h4", null, "Every node below was reported by the solver"));
+  note.appendChild(el("div", null,
+    "Depth, branch variable, bound and outcome are read out of Inferno's own "
+    + "branch-and-bound state as each node is disposed of. Nothing here is inferred, "
+    + "and when a search exceeds the event budget the log stops being exhaustive "
+    + "rather than being filled in."));
+  p.appendChild(note);
+
+  const wrap = el("div", "treewrap");
+  wrap.appendChild(drawTree(S.events));
+  p.appendChild(wrap);
+
+  p.appendChild(el("h3", null, "Node log"));
+  const log = el("div", "log");
+  S.events.slice(-400).forEach((e) => {
+    const line = el("div");
+    const cls = e.outcome === "integer" ? "g"
+      : (e.outcome === "unresolved" ? "r" : (e.outcome === "branched" ? "c" : ""));
+    line.className = cls;
+    const bv = e.branch_var >= 0 && S.model
+      ? (S.model.variables[e.branch_var] || {}).name || ("x" + e.branch_var) : "";
+    line.textContent =
+      `node ${String(e.node).padStart(6)}  d=${String(e.depth).padStart(3)}  `
+      + `${e.outcome.padEnd(11)} bound=${fmtc(signed(e.node_bound))}  `
+      + `inc=${fmtc(signed(e.incumbent))}  open=${String(e.open_nodes).padStart(5)}  `
+      + `t=${e.elapsed.toFixed(3)}s` + (bv ? `  branch ${bv} @ ${e.branch_value.toFixed(4)}` : "");
+    log.appendChild(line);
+  });
+  p.appendChild(log);
+}
+
+const fmtc = (v) => {
+  if (v === null || v === undefined || !isFinite(v)) return "     none";
+  return v.toFixed(3).padStart(12);
+};
+
+/* Lays out the events that actually describe tree structure. Depth-first
+   search means consecutive events form a spine; this draws each recorded
+   node at its reported depth, in the order the solver reported it. It is a
+   faithful trace of the search order, not a reconstructed parent/child
+   tree — the solver reports depth, not parent ids, and inventing the
+   missing edges would be exactly the kind of fabrication this panel is
+   supposed to avoid. */
+function drawTree(events) {
+  const shown = events.slice(0, 260);
+  const COL = 46, ROW = 26, PAD = 30;
+  const maxDepth = shown.reduce((m, e) => Math.max(m, e.depth), 0);
+  const w = PAD * 2 + (maxDepth + 1) * COL + 210;
+  const h = PAD * 2 + shown.length * ROW;
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("width", String(w));
+  svg.setAttribute("height", String(h));
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+
+  const color = {
+    root: "#ffb238", branched: "#6fa3c4", integer: "#5cb37e",
+    infeasible: "#7d7365", dominated: "#a8481a", "gap-cut": "#d9a441",
+    unresolved: "#e2554a",
+  };
+  const lastAtDepth = {};
+  shown.forEach((e, i) => {
+    const x = PAD + e.depth * COL, y = PAD + i * ROW;
+    const parent = lastAtDepth[e.depth - 1];
+    if (parent) {
+      const path = document.createElementNS(NS, "path");
+      path.setAttribute("d",
+        `M ${parent.x} ${parent.y} V ${y} H ${x}`);
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", "#3a3226");
+      path.setAttribute("stroke-width", "1");
+      svg.appendChild(path);
+    }
+    const c = document.createElementNS(NS, "circle");
+    c.setAttribute("cx", String(x)); c.setAttribute("cy", String(y));
+    c.setAttribute("r", e.outcome === "root" ? "6" : "4");
+    c.setAttribute("fill", color[e.outcome] || "#b7a998");
+    svg.appendChild(c);
+
+    const t = document.createElementNS(NS, "text");
+    t.setAttribute("x", String(PAD + (maxDepth + 1) * COL + 8));
+    t.setAttribute("y", String(y + 4));
+    t.setAttribute("fill", "#b7a998");
+    t.setAttribute("font-family", "IBM Plex Mono, monospace");
+    t.setAttribute("font-size", "10.5");
+    const bv = e.branch_var >= 0 && S.model
+      ? (S.model.variables[e.branch_var] || {}).name || ("x" + e.branch_var) : "";
+    t.textContent = `${e.outcome}  bound=${fmt(signed(e.node_bound), 2)}`
+      + (bv ? `  · ${bv} ≤ ${Math.floor(e.branch_value)} | ≥ ${Math.ceil(e.branch_value)}` : "");
+    svg.appendChild(t);
+
+    const title = document.createElementNS(NS, "title");
+    title.textContent = `node ${e.node} · depth ${e.depth} · ${e.outcome}`
+      + ` · bound ${fmt(signed(e.node_bound))} · incumbent ${fmt(signed(e.incumbent))}`
+      + ` · open ${e.open_nodes} · ${e.elapsed.toFixed(3)}s`;
+    c.appendChild(title);
+    lastAtDepth[e.depth] = { x, y };
+  });
+  if (events.length > shown.length) {
+    const t = document.createElementNS(NS, "text");
+    t.setAttribute("x", String(PAD)); t.setAttribute("y", String(h - 8));
+    t.setAttribute("fill", "#7d7365");
+    t.setAttribute("font-family", "IBM Plex Mono, monospace");
+    t.setAttribute("font-size", "11");
+    t.textContent = `… ${events.length - shown.length} further node events not drawn `
+      + `(full trace in the node log below)`;
+    svg.appendChild(t);
+  }
+  return svg;
+}
+
+/* ---------- charts, drawn from real solver events ---------- */
+function panelCharts(p) {
+  if (!S.events.length) {
+    p.appendChild(el("div", "empty", "No solver events yet. Charts are drawn from real "
+      + "branch-and-bound progress, so an LP solve produces none."));
+    return;
+  }
+  p.appendChild(el("h3", null, "Search progress"));
+  const grid = el("div", "charts");
+  grid.appendChild(chartCard("Incumbent and bound vs node", (cv) => drawConvergence(cv)));
+  grid.appendChild(chartCard("Optimality gap vs node", (cv) => drawGap(cv)));
+  grid.appendChild(chartCard("Open nodes vs node", (cv) => drawOpen(cv)));
+  grid.appendChild(chartCard("Node outcomes", (cv) => drawOutcomes(cv)));
+  p.appendChild(grid);
+
+  if (S.result && S.result.variables && S.result.variables.length) {
+    p.appendChild(el("h3", null, "Solution"));
+    const g2 = el("div", "charts");
+    g2.appendChild(chartCard("Variable values at the optimum", (cv) => drawVars(cv)));
+    if (S.result.rows && S.result.rows.length)
+      g2.appendChild(chartCard("Constraint utilisation", (cv) => drawUtil(cv)));
+    p.appendChild(g2);
+  }
+}
+
+function chartCard(title, draw) {
+  const card = el("div", "chart");
+  card.appendChild(el("div", "title", title));
+  const cv = el("canvas");
+  card.appendChild(cv);
+  requestAnimationFrame(() => { sizeCanvas(cv); draw(cv); });
+  return card;
+}
+
+function sizeCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = cv.getBoundingClientRect();
+  cv.width = Math.max(1, Math.round(rect.width * dpr));
+  cv.height = Math.max(1, Math.round(170 * dpr));
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: rect.width, h: 170 };
+}
+
+function axes(ctx, w, h, pad) {
+  ctx.strokeStyle = "#3a3226"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, h - pad.b); ctx.lineTo(w - pad.r, h - pad.b);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(58,50,38,0.55)";
+  for (let i = 1; i <= 3; i++) {
+    const y = pad.t + (h - pad.t - pad.b) * i / 4;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+  }
+}
+
+function label(ctx, text, x, y, color) {
+  ctx.fillStyle = color || "#7d7365";
+  ctx.font = "10px IBM Plex Mono, monospace";
+  ctx.fillText(text, x, y);
+}
+
+function drawConvergence(cv) {
+  const { ctx, w, h } = sizeCanvas(cv);
+  const pad = { l: 54, r: 8, t: 10, b: 20 };
+  ctx.clearRect(0, 0, w, h);
+  const pts = S.events.map((e, i) => ({
+    i, inc: signed(e.incumbent), bnd: signed(e.best_bound),
+  }));
+  const finite = pts.flatMap((p) => [p.inc, p.bnd]).filter((v) => v !== null && isFinite(v));
+  if (!finite.length) { label(ctx, "no finite bound yet", pad.l, h / 2); return; }
+  let lo = Math.min(...finite), hi = Math.max(...finite);
+  if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+  const X = (i) => pad.l + (w - pad.l - pad.r) * (pts.length < 2 ? 0.5 : i / (pts.length - 1));
+  const Y = (v) => h - pad.b - (h - pad.t - pad.b) * (v - lo) / (hi - lo);
+  axes(ctx, w, h, pad);
+  const series = (key, color, dash) => {
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.setLineDash(dash || []);
+    ctx.beginPath();
+    let started = false;
+    pts.forEach((p) => {
+      const v = p[key];
+      if (v === null || !isFinite(v)) { started = false; return; }
+      if (!started) { ctx.moveTo(X(p.i), Y(v)); started = true; }
+      else ctx.lineTo(X(p.i), Y(v));
+    });
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  series("bnd", "#6fa3c4");
+  series("inc", "#ff6a1f");
+  label(ctx, hi.toPrecision(5), 4, pad.t + 8);
+  label(ctx, lo.toPrecision(5), 4, h - pad.b);
+  label(ctx, "node events →", w - 90, h - 5);
+  const lg = el("div", "legend");
+  lg.innerHTML = '<span><i style="background:#ff6a1f"></i>incumbent</span>'
+    + '<span><i style="background:#6fa3c4"></i>best bound</span>';
+  cv.parentElement.appendChild(lg);
+}
+
+function drawGap(cv) {
+  const { ctx, w, h } = sizeCanvas(cv);
+  const pad = { l: 54, r: 8, t: 10, b: 20 };
+  ctx.clearRect(0, 0, w, h);
+  // "No incumbent yet" arrives as JSON null, and isFinite(null) is TRUE
+  // because Number(null) is 0 — so without the explicit null test this
+  // computed a gap against a zero incumbent and drew an axis labelled
+  // 4.96e20 %. A missing value must stay missing, not become zero.
+  const gaps = S.events.map((e) => {
+    const inc = e.incumbent, bnd = e.best_bound;
+    if (inc === null || bnd === null || inc === undefined || bnd === undefined) return null;
+    if (!isFinite(inc) || !isFinite(bnd)) return null;
+    return Math.abs(inc - bnd) / (Math.abs(inc) + 1e-10) * 100;
+  });
+  const finite = gaps.filter((g) => g !== null && isFinite(g));
+  if (!finite.length) { axes(ctx, w, h, pad); label(ctx, "no incumbent yet", pad.l + 6, h / 2); return; }
+  const hi = Math.max(...finite, 1e-9);
+  axes(ctx, w, h, pad);
+  const X = (i) => pad.l + (w - pad.l - pad.r) * (gaps.length < 2 ? 0.5 : i / (gaps.length - 1));
+  const Y = (v) => h - pad.b - (h - pad.t - pad.b) * (v / hi);
+  ctx.strokeStyle = "#ffb238"; ctx.lineWidth = 2; ctx.beginPath();
+  let started = false;
+  gaps.forEach((g, i) => {
+    if (g === null) { started = false; return; }
+    if (!started) { ctx.moveTo(X(i), Y(g)); started = true; } else ctx.lineTo(X(i), Y(g));
+  });
+  ctx.stroke();
+  label(ctx, hi.toFixed(3) + "%", 4, pad.t + 8);
+  label(ctx, "0%", 4, h - pad.b);
+}
+
+function drawOpen(cv) {
+  const { ctx, w, h } = sizeCanvas(cv);
+  const pad = { l: 54, r: 8, t: 10, b: 20 };
+  ctx.clearRect(0, 0, w, h);
+  const vals = S.events.map((e) => e.open_nodes);
+  const hi = Math.max(1, ...vals);
+  axes(ctx, w, h, pad);
+  ctx.fillStyle = "rgba(111,163,196,0.35)";
+  const bw = Math.max(1, (w - pad.l - pad.r) / Math.max(1, vals.length));
+  vals.forEach((v, i) => {
+    const x = pad.l + (w - pad.l - pad.r) * (i / Math.max(1, vals.length));
+    const y = h - pad.b - (h - pad.t - pad.b) * (v / hi);
+    ctx.fillRect(x, y, Math.max(1, bw - 0.5), h - pad.b - y);
+  });
+  label(ctx, String(hi), 4, pad.t + 8);
+  label(ctx, "0", 4, h - pad.b);
+}
+
+function drawOutcomes(cv) {
+  const { ctx, w, h } = sizeCanvas(cv);
+  ctx.clearRect(0, 0, w, h);
+  const counts = {};
+  S.events.forEach((e) => { counts[e.outcome] = (counts[e.outcome] || 0) + 1; });
+  const keys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  const color = {
+    root: "#ffb238", branched: "#6fa3c4", integer: "#5cb37e",
+    infeasible: "#7d7365", dominated: "#a8481a", "gap-cut": "#d9a441", unresolved: "#e2554a",
+  };
+  const hi = Math.max(...keys.map((k) => counts[k]), 1);
+  const rowH = Math.min(22, (h - 12) / Math.max(1, keys.length));
+  keys.forEach((k, i) => {
+    const y = 6 + i * rowH;
+    const bw = (w - 150) * (counts[k] / hi);
+    ctx.fillStyle = color[k] || "#b7a998";
+    ctx.fillRect(96, y, Math.max(2, bw), rowH - 6);
+    label(ctx, k, 4, y + rowH - 9, "#b7a998");
+    label(ctx, String(counts[k]), 100 + Math.max(2, bw) + 6, y + rowH - 9);
+  });
+}
+
+function drawVars(cv) {
+  const { ctx, w, h } = sizeCanvas(cv);
+  ctx.clearRect(0, 0, w, h);
+  const vars = S.result.variables.filter((v) => Math.abs(v.value) > 1e-9)
+    .sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 8);
+  if (!vars.length) { label(ctx, "every variable is zero at the optimum", 8, h / 2); return; }
+  const hi = Math.max(...vars.map((v) => Math.abs(v.value)));
+  const rowH = Math.min(20, (h - 10) / vars.length);
+  vars.forEach((v, i) => {
+    const y = 5 + i * rowH;
+    const bw = (w - 190) * (Math.abs(v.value) / hi);
+    ctx.fillStyle = v.type === "binary" ? "#ff6a1f" : (v.type === "integer" ? "#6fa3c4" : "#5cb37e");
+    ctx.fillRect(120, y, Math.max(2, bw), rowH - 6);
+    label(ctx, v.name.slice(0, 17), 4, y + rowH - 9, "#b7a998");
+    label(ctx, fmt(v.value, 3), 124 + Math.max(2, bw), y + rowH - 9);
+  });
+}
+
+function drawUtil(cv) {
+  const { ctx, w, h } = sizeCanvas(cv);
+  ctx.clearRect(0, 0, w, h);
+  const rows = S.result.rows.filter((r) => r.upper_bound !== null && Math.abs(r.upper_bound) > 1e-12)
+    .map((r) => ({ name: r.name, u: r.activity / r.upper_bound, binding: r.binding }))
+    .sort((a, b) => b.u - a.u).slice(0, 8);
+  if (!rows.length) { label(ctx, "no upper-bounded rows to report utilisation for", 8, h / 2); return; }
+  const rowH = Math.min(20, (h - 10) / rows.length);
+  rows.forEach((r, i) => {
+    const y = 5 + i * rowH;
+    const bw = (w - 190) * Math.max(0, Math.min(1, r.u));
+    ctx.fillStyle = r.binding ? "#ff6a1f" : "#3f5a6b";
+    ctx.fillRect(120, y, Math.max(2, bw), rowH - 6);
+    label(ctx, r.name.slice(0, 17), 4, y + rowH - 9, "#b7a998");
+    label(ctx, (r.u * 100).toFixed(1) + "%", 124 + Math.max(2, bw), y + rowH - 9);
+  });
+}
+
+function panelCompare(p) {
+  if (!S.previous || !S.result) {
+    p.appendChild(el("div", "empty",
+      "Solve twice — change the model, or ask a what-if follow-up — and both runs are "
+      + "compared here. Both columns are real solver runs; nothing is estimated."));
+    return;
+  }
+  p.appendChild(el("h3", null, "Run comparison"));
+  const a = S.previous, b = S.result;
+  const rows = [];
+  const push = (name, va, vb, digits) => {
+    const d = (typeof va === "number" && typeof vb === "number") ? vb - va : null;
+    rows.push([name, fmt(va, digits), fmt(vb, digits),
+      d === null ? "—" : (d >= 0 ? "+" : "") + fmt(d, digits), d]);
+  };
+  push("Objective", a.objective, b.objective, 4);
+  if (a.is_mip && b.is_mip) {
+    push("Best bound", a.best_bound, b.best_bound, 4);
+    push("Gap %", a.gap === null ? null : a.gap * 100, b.gap === null ? null : b.gap * 100, 4);
+    push("Nodes", a.nodes, b.nodes, 0);
+  } else {
+    push("Iterations", a.iterations, b.iterations, 0);
+  }
+  const t = el("table", "cmp");
+  const head = el("tr");
+  ["Metric", S.previousLabel || "Previous", "Current", "Δ"].forEach((x) =>
+    head.appendChild(el("th", null, x)));
+  t.appendChild(head);
+  rows.forEach(([name, va, vb, d, raw]) => {
+    const tr = el("tr");
+    tr.appendChild(el("td", null, name));
+    tr.appendChild(el("td", null, va));
+    tr.appendChild(el("td", null, vb));
+    const dc = el("td", "delta " + (raw > 0 ? "up" : raw < 0 ? "down" : ""), d);
+    tr.appendChild(dc);
+    t.appendChild(tr);
+  });
+  p.appendChild(t);
+  const note = el("div", "notice");
+  note.appendChild(el("h4", null, "Both columns are measured"));
+  note.appendChild(el("div", null,
+    "Each column is a separate Inferno run against a separately validated model. "
+    + "No difference shown here was predicted by the language model."));
+  p.appendChild(note);
+}
+
+async function panelLogs(p) {
+  p.appendChild(el("h3", null, "Server event log"));
+  const note = el("div", "notice");
+  note.appendChild(el("h4", null, "Named failure codes"));
+  note.appendChild(el("div", null,
+    "AI_REQUEST · AI_SUCCESS · AI_TIMEOUT · AI_RATE_LIMIT · AI_INVALID_JSON · "
+    + "AI_INVALID_MODEL · AI_FALLBACK · IMAGE_FAILURE · SOLVE_START. "
+    + "API keys are never logged."));
+  p.appendChild(note);
+  const host = el("div", "log");
+  p.appendChild(host);
+  const res = await API.get("/api/logs?limit=200");
+  (res.body.entries || []).slice().reverse().forEach((e) => {
+    const d = el("div");
+    d.className = e.code.startsWith("AI_SUCCESS") || e.code === "SOLVE_START" ? "g"
+      : (e.code.includes("ERROR") || e.code.includes("TIMEOUT") || e.code.includes("INVALID")
+        || e.code.includes("RATE") ? "r" : "");
+    const ts = new Date(e.t * 1000).toLocaleTimeString();
+    d.textContent = `${ts}  ${e.code.padEnd(20)} ${e.message}`;
+    host.appendChild(d);
+  });
+}
+
+/* ---------- actions ---------- */
+async function boot() {
+  buildTabs();
+  const h = await API.get("/api/health").catch(() => null);
+  if (h && h.body && h.body.ok) {
+    S.aiEnabled = !!h.body.ai.enabled;
+    S.aiReason = h.body.ai.reason || "";
+    $("pill-solver").textContent = "Inferno " + h.body.solver.version;
+    $("pill-solver").className = "pill ok";
+    $("pill-ai").textContent = S.aiEnabled ? "AI · " + h.body.ai.text_model : "AI offline";
+    $("pill-ai").className = "pill " + (S.aiEnabled ? "ok" : "off");
+  } else {
+    $("pill-solver").textContent = "server unreachable";
+    $("pill-solver").className = "pill off";
+  }
+  const ex = await API.get("/api/examples").catch(() => null);
+  S.examples = (ex && ex.body.examples) || [];
+
+  if (S.aiEnabled) {
+    say("ai", "Inferno AI",
+      "Describe an optimization problem in plain English and I'll formulate it as an "
+      + "LP or MILP. I don't solve anything — Inferno does, and every number you see "
+      + "comes from the solver. You can inspect and edit the formulation before it runs.",
+      { chips: [["Load an example", () => selectTab("model")]] });
+  } else {
+    say("system", "AI assistant unavailable",
+      (S.aiReason || "OPENROUTER_API_KEY not configured")
+      + ".\n\nYou can still use Inferno: load a predefined example, edit the model, "
+      + "and run the solver. Everything except natural-language formulation and "
+      + "explanation works with zero API calls.",
+      { chips: [["Load an example", () => selectTab("model")]] });
+  }
+  renderAll();
+}
+
+async function loadExample(id, title) {
+  const res = await API.get("/api/examples/" + encodeURIComponent(id));
+  if (res.status !== 200 || !res.body.model) {
+    say("error", "error", "Could not load that example: "
+      + (res.body.error || res.status)); return;
+  }
+  adoptModel(res.body.model, res.body.preview);
+  say("system", "example loaded",
+    `Loaded "${title}" — ${res.body.model.variables.length} variables, `
+    + `${res.body.model.constraints.length} constraints. This model took the same `
+    + `validation path an AI-generated one takes.`,
+    { chips: [["Run Inferno", runSolve], ["View formulation", () => selectTab("model")]] });
+  selectTab("model");
+}
+
+function adoptModel(model, preview) {
+  model.__preview = preview || "";
+  S.model = model;
+  S.previous = S.result ? S.result : S.previous;
+  S.previousLabel = S.result ? "Previous run" : "";
+  S.result = null;
+  S.events = [];
+  S.editing = false;
+  renderAll();
+}
+
+async function send() {
+  const text = $("input").value.trim();
+  if (!text) return;
+  $("input").value = "";
+  say("user", "you", text);
+
+  if (!S.aiEnabled) {
+    say("system", "AI assistant unavailable",
+      (S.aiReason || "OPENROUTER_API_KEY not configured")
+      + ". Inferno is still fully available — load an example or edit a model, "
+      + "then run the solver.",
+      { chips: [["Load an example", () => selectTab("model")]] });
+    return;
+  }
+
+  // A follow-up about an existing solved model is a question, not a new
+  // formulation. Routing those to /api/chat keeps the model on screen
+  // instead of silently replacing it with a re-derivation.
+  const followUp = S.model && S.result && /^(why|what does|which|explain|show me|compare|how come|is |are |did )/i.test(text);
+  const stop = busy(followUp ? "asking the copilot…" : "formulating a model…");
+  try {
+    if (followUp) {
+      const res = await API.post("/api/chat",
+        { message: text, session: S.session });
+      stop();
+      if (res.body.ok) say("ai", "Inferno AI", res.body.reply, { markdown: true });
+      else aiFailed(res.body);
+      return;
+    }
+    const res = await API.post("/api/formulate", { message: text, session: S.session });
+    stop();
+    const b = res.body;
+    if (b.ok && b.mode === "clarification") {
+      say("ai", "Inferno AI", b.clarification, { markdown: true });
+      return;
+    }
+    if (b.ok && b.mode === "model") {
+      adoptModel(b.model, b.preview);
+      say("ai", "Inferno AI",
+        `Model ready — **${b.model.name}**: ${b.model.variables.length} variables, `
+        + `${b.model.constraints.length} constraints. Check the formulation, then run it.`,
+        { markdown: true, chips: [["Run Inferno", runSolve],
+          ["View formulation", () => selectTab("model")],
+          ["Edit model", () => { S.editing = true; selectTab("model"); }]] });
+      selectTab("model");
+      return;
+    }
+    if (b.mode === "invalid_model") {
+      const w = say("error", "validation failed",
+        "The AI generated a model that could not be validated.\n\n"
+        + "The solver was not executed.\n\n"
+        + b.errors.slice(0, 8).map((e) => "• " + e).join("\n")
+        + (b.errors.length > 8 ? `\n• …and ${b.errors.length - 8} more` : ""),
+        { chips: [["Try again", () => { $("input").value = text; send(); }],
+          ["Load an example", () => selectTab("model")]] });
+      void w;
+      return;
+    }
+    aiFailed(b);
+  } catch (err) {
+    stop();
+    say("error", "network", "Could not reach the server: " + err.message
+      + "\n\nIf the server is running, Inferno itself is unaffected.");
+  }
+}
+
+function aiFailed(b) {
+  say("error", (b.ai && b.ai.code) || "ai unavailable",
+    (b.message || "AI temporarily unavailable.") + "\n\nInferno solver is still available.",
+    { chips: [["Load an example", () => selectTab("model")],
+      ["Manual model", () => { S.editing = true; selectTab("model"); }]] });
+}
+
+async function applyEdit() {
+  let parsed;
+  try {
+    parsed = JSON.parse($("model-editor").value);
+  } catch (e) {
+    say("error", "invalid JSON", "That is not valid JSON: " + e.message
+      + "\n\nThe solver was not executed.");
+    return;
+  }
+  const res = await API.post("/api/validate", { model: parsed });
+  if (!res.body.valid) {
+    say("error", "validation failed",
+      "The edited model could not be validated. The solver was not executed.\n\n"
+      + res.body.errors.slice(0, 8).map((e) => "• " + e).join("\n"));
+    return;
+  }
+  adoptModel(res.body.model, res.body.preview);
+  say("system", "model updated", "Edited model passed validation and is ready to run.",
+    { chips: [["Run Inferno", runSolve]] });
+  selectTab("model");
+}
+
+async function runSolve() {
+  if (!S.model) return;
+  if (S.result) { S.previous = S.result; S.previousLabel = "Previous run"; }
+  S.result = null; S.events = [];
+  const res = await API.post("/api/solve",
+    { model: stripPreview(S.model), time_limit: 30, session: S.session });
+  if (!res.body.ok) {
+    say("error", "not solved",
+      (res.body.message || "The model could not be validated.") + "\n\n"
+      + (res.body.errors || []).slice(0, 6).map((e) => "• " + e).join("\n"));
+    return;
+  }
+  S.runId = res.body.run;
+  say("solver", "Inferno", "Solving…");
+  selectTab("tree");
+  renderAll();
+  poll();
+}
+
+function stripPreview(m) {
+  const c = JSON.parse(JSON.stringify(m));
+  delete c.__preview;
+  return c;
+}
+
+function poll() {
+  if (S.polling) clearInterval(S.polling);
+  let since = 0;
+  S.polling = setInterval(async () => {
+    if (!S.runId) return;
+    let res;
+    try {
+      res = await API.get(`/api/solve/${S.runId}?since=${since}`);
+    } catch (e) { return; }
+    const s = res.body;
+    if (!s || s.error) { clearInterval(S.polling); S.runId = null; return; }
+    if (s.events && s.events.length) {
+      S.events = S.events.concat(s.events);
+      since = s.event_count;
+    }
+    if (s.state === "finished" || s.state === "failed") {
+      clearInterval(S.polling); S.polling = null;
+      S.runId = null;
+      if (s.state === "failed") {
+        say("error", "solver error", "Inferno could not complete this solve: " + s.error);
+      } else {
+        S.result = s.result;
+        announceResult(s.result);
+      }
+    }
+    renderAll();
+  }, 350);
+}
+
+function announceResult(r) {
+  if (!r) return;
+  let text;
+  if (r.status !== "OPTIMAL") {
+    text = `Inferno returned **${r.status}**. No solution is being reported, and no `
+      + `objective or gap is being shown, because there is none.`;
+  } else if (r.is_mip) {
+    text = `Inferno ${r.proved_optimal ? "**proved this solution optimal**" : "found a solution but did **not** prove it optimal"}.\n\n`
+      + `Objective: **${fmt(r.objective, 4)}**\n`
+      + `${r.bound_is_upper ? "Best bound (upper)" : "Best bound (lower)"}: ${fmt(r.best_bound, 4)}\n`
+      + `Gap: ${r.gap === null ? "—" : (r.gap * 100).toFixed(4) + "%"}\n`
+      + `Nodes explored: ${r.nodes}\n`
+      + `Runtime: ${r.solver_seconds.toFixed(3)} s\n`
+      + `Independent checker: **${r.checker_passed ? "PASS" : "FAIL"}**`;
+  } else {
+    text = `Inferno solved the LP.\n\nObjective: **${fmt(r.objective, 4)}**\n`
+      + `Simplex iterations: ${r.iterations}\n`
+      + `Runtime: ${r.seconds.toFixed(3)} s\n`
+      + `Independent checker: **${r.checker_passed ? "PASS" : "FAIL"}**`;
+  }
+  const chips = [["Open solver tab", () => selectTab("solver")],
+    ["Charts", () => selectTab("charts")]];
+  if (S.aiEnabled) chips.unshift(["Explain this result", () => explain()]);
+  say("solver", "Inferno", text, { markdown: true, chips });
+  if (!S.aiEnabled && r.status === "OPTIMAL") {
+    // With no AI, the user still gets a written result summary — computed
+    // from the solver's own numbers, on the server, with no narrative.
+    explainDeterministic();
+  }
+}
+
+async function explain(question) {
+  if (!S.result) return;
+  const stop = busy("asking the copilot to explain Inferno's result…");
+  const res = await API.post("/api/explain", {
+    model: stripPreview(S.model), result: S.result, question: question || null,
+    session: S.session,
+  }).catch(() => null);
+  stop();
+  if (!res) { say("error", "network", "Could not reach the server."); return; }
+  if (res.body.ok) {
+    say("ai", "Inferno AI", res.body.explanation, { markdown: true });
+  } else {
+    say("error", (res.body.ai && res.body.ai.code) || "ai unavailable",
+      res.body.message || "AI temporarily unavailable.");
+    if (res.body.deterministic) {
+      say("solver", "Inferno · computed summary", res.body.deterministic);
+    }
+  }
+}
+
+async function explainDeterministic() {
+  const res = await API.post("/api/explain", {
+    model: stripPreview(S.model), result: S.result, session: S.session,
+  }).catch(() => null);
+  if (res && res.body && res.body.deterministic) {
+    say("solver", "Inferno · computed summary", res.body.deterministic);
+  }
+}
+
+function downloadModel() {
+  const blob = new Blob([JSON.stringify(stripPreview(S.model), null, 2)],
+    { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (S.model.name || "model") + ".json";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+/* ---------- wiring ---------- */
+$("btn-send").addEventListener("click", send);
+$("input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+});
+$("btn-examples").addEventListener("click", () => selectTab("model"));
+$("btn-reset").addEventListener("click", () => {
+  S.model = null; S.result = null; S.previous = null; S.events = [];
+  S.session = "s" + Math.random().toString(36).slice(2, 10);
+  $("stream").textContent = "";
+  boot();
+});
+window.addEventListener("resize", () => { if (S.tab === "charts") renderPanel("charts"); });
+
+boot();
+</script>

@@ -35,6 +35,19 @@ double Frac(double v) { return v - std::floor(v); }
 
 }  // namespace
 
+const char* NodeOutcomeName(NodeOutcome outcome) {
+  switch (outcome) {
+    case NodeOutcome::kRootRelaxation: return "root";
+    case NodeOutcome::kBranched: return "branched";
+    case NodeOutcome::kIntegerFeasible: return "integer";
+    case NodeOutcome::kInfeasible: return "infeasible";
+    case NodeOutcome::kDominated: return "dominated";
+    case NodeOutcome::kGapCut: return "gap-cut";
+    case NodeOutcome::kRelaxationFailed: return "unresolved";
+  }
+  return "unknown";
+}
+
 core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBoundOptions& opts,
                             const core::TolerancePolicy& tol) {
   core::MipSolution out;
@@ -166,6 +179,46 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
     try_rounding_mode(x, 1, incumbent_obj, incumbent_x);  // down: feasible for packing rows
   };
 
+  // --- Observer plumbing. Everything reported here is read out of the
+  // search state at the moment a node is disposed of; nothing is
+  // interpolated, smoothed or predicted. When no callback is installed
+  // none of this runs, so the search pays nothing for the capability.
+  int events_emitted = 0;
+  double incumbent_for_events = kInfinity;
+  double bound_for_events = -kInfinity;
+  const std::vector<Node>* stack_for_events = nullptr;
+  auto emit = [&](int node_index, int depth, int branch_var, double branch_value, double node_bound,
+                  NodeOutcome outcome) {
+    if (!opts.node_callback) return;
+    // The event budget bounds volume on a large tree. An incumbent
+    // improvement is always reported regardless -- it is the one event a
+    // watcher cannot afford to miss, and there are at most as many of them
+    // as there are improvements.
+    const bool always = (outcome == NodeOutcome::kIntegerFeasible);
+    if (!always && events_emitted >= opts.event_limit) return;
+    ++events_emitted;
+    NodeEvent ev;
+    ev.node_index = node_index;
+    ev.depth = depth;
+    ev.branch_var = branch_var;
+    ev.branch_value = branch_value;
+    ev.node_bound = node_bound;
+    ev.incumbent = incumbent_for_events;
+    // A valid global lower bound right now: the incumbent, every subtree
+    // still open, and every subtree abandoned unresolved. Never reported
+    // tighter than that minimum, so a watcher reading it mid-solve is
+    // reading a real bound rather than an optimistic one.
+    double lb = std::min(incumbent_for_events, bound_for_events);
+    if (stack_for_events != nullptr) {
+      for (const auto& nd : *stack_for_events) lb = std::min(lb, nd.parent_bound);
+    }
+    ev.best_bound = lb;
+    ev.outcome = outcome;
+    ev.elapsed_seconds = Now() - t_start;
+    ev.open_nodes = stack_for_events ? static_cast<int>(stack_for_events->size()) : 0;
+    opts.node_callback(ev);
+  };
+
   // --- Root relaxation. Its objective is the initial global bound. ---
   Node root;
   core::Solution root_sol;
@@ -193,17 +246,24 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
     out.best_bound = -kInfinity;
     out.gap = kInfinity;
     out.proved_optimal = false;
+    emit(0, 0, -1, 0.0, 0.0,
+         root_res == NodeResult::kInfeasible ? NodeOutcome::kInfeasible
+                                              : NodeOutcome::kRelaxationFailed);
     return out;
   }
 
   double incumbent_obj = kInfinity;
   std::vector<double> incumbent_x;
   try_rounding(root_sol.x, incumbent_obj, incumbent_x);
+  incumbent_for_events = incumbent_obj;
+  bound_for_events = root_sol.objective_value;
+  emit(0, 0, -1, 0.0, root_sol.objective_value, NodeOutcome::kRootRelaxation);
 
   std::vector<Node> stack;
   root.parent_bound = root_sol.objective_value;
   stack.push_back(root);
 
+  stack_for_events = &stack;
   const double root_bound = root_sol.objective_value;
   int nodes = 0;
 
@@ -240,7 +300,10 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
     // gap_tolerance: cutting on the gap tolerance would discard subtrees
     // that might genuinely be better, which is fine as a speed/accuracy
     // trade but must not then be reported as proved optimality.
-    if (node.parent_bound >= incumbent_obj - 1e-9) continue;
+    if (node.parent_bound >= incumbent_obj - 1e-9) {
+      emit(nodes, node.depth, -1, 0.0, node.parent_bound, NodeOutcome::kDominated);
+      continue;
+    }
 
     // Optional gap-based cut. When enabled this is a real trade: it stops
     // early, and it is recorded as unresolved so the reported bound and
@@ -249,6 +312,8 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
       double allowed = opts.gap_tolerance * (std::abs(incumbent_obj) + 1e-10);
       if (node.parent_bound >= incumbent_obj - allowed) {
         mark_unresolved(node.parent_bound);
+        bound_for_events = std::min(bound_for_events, best_unresolved);
+        emit(nodes, node.depth, -1, 0.0, node.parent_bound, NodeOutcome::kGapCut);
         continue;
       }
     }
@@ -256,16 +321,24 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
     core::Solution s;
     ++nodes;
     NodeResult res = solve_relaxation(node, s);
-    if (res == NodeResult::kInfeasible) continue;  // proven empty: resolved
+    if (res == NodeResult::kInfeasible) {
+      emit(nodes, node.depth, -1, 0.0, node.parent_bound, NodeOutcome::kInfeasible);
+      continue;  // proven empty: resolved
+    }
     if (res == NodeResult::kFailed) {
       // We could not evaluate this subtree. Discarding it silently would
       // be the classic way to report a confident wrong bound.
       mark_unresolved(node.parent_bound);
+      bound_for_events = std::min(bound_for_events, best_unresolved);
+      emit(nodes, node.depth, -1, 0.0, node.parent_bound, NodeOutcome::kRelaxationFailed);
       if (opts.verbose) printf("  [node %d] relaxation failed; subtree left unresolved\n", nodes);
       continue;
     }
 
-    if (s.objective_value >= incumbent_obj - 1e-9) continue;  // proven dominated
+    if (s.objective_value >= incumbent_obj - 1e-9) {
+      emit(nodes, node.depth, -1, 0.0, s.objective_value, NodeOutcome::kDominated);
+      continue;  // proven dominated
+    }
 
     int branch_var = most_fractional(s.x);
     if (branch_var == -1) {
@@ -275,10 +348,13 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
         incumbent_x = s.x;
         if (opts.verbose) printf("  [node %d] incumbent %.10g\n", nodes, incumbent_obj);
       }
+      incumbent_for_events = incumbent_obj;
+      emit(nodes, node.depth, -1, 0.0, s.objective_value, NodeOutcome::kIntegerFeasible);
       continue;
     }
 
     try_rounding(s.x, incumbent_obj, incumbent_x);
+    incumbent_for_events = incumbent_obj;
 
     double v = s.x[branch_var];
     Node down = node, up = node;
@@ -288,6 +364,7 @@ core::MipSolution SolveMip(const core::MipProblem& problem, const BranchAndBound
     up.lower.emplace_back(branch_var, std::ceil(v));
     stack.push_back(up);
     stack.push_back(down);
+    emit(nodes, node.depth, branch_var, v, s.objective_value, NodeOutcome::kBranched);
   }
 
   // Whatever is still on the stack when a limit fired is unresolved.

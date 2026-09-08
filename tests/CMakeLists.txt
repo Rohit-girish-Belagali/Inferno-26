@@ -52,3 +52,13 @@ add_test(NAME mip_suite_test COMMAND mip_suite_test WORKING_DIRECTORY ${CMAKE_SO
 add_executable(industrial_mip_test industrial_mip_test.cpp)
 target_link_libraries(industrial_mip_test PRIVATE inferno_core)
 add_test(NAME industrial_mip_test COMMAND industrial_mip_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# The copilot layer: model validation, OpenRouter failure handling, the
+# offline demo path. Runs with no API key and no network -- every AI call
+# in it goes through an injected transport, which is what makes the whole
+# failure matrix testable in CI.
+add_test(NAME copilot_test
+         COMMAND python3 ${CMAKE_SOURCE_DIR}/server/tests/test_copilot.py
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(copilot_test PROPERTIES
+                     ENVIRONMENT "INFERNO_LIBRARY=${CMAKE_BINARY_DIR}/libinferno.dylib")

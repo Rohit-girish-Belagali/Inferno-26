@@ -47,6 +47,33 @@ typedef enum {
   INFERNO_SOLVE_NUMERICAL_ERROR = 4
 } inferno_solve_status;
 
+/* One node of a real branch-and-bound search. Every field is copied out
+ * of the solver's own state at the moment the node was disposed of --
+ * nothing here is interpolated or predicted, which is what lets a user
+ * interface show live search progress without inventing any of it. */
+typedef struct {
+  int node_index;
+  int depth;
+  int branch_var;         /* column branched on, or -1 */
+  double branch_value;    /* the fractional value that forced the branch */
+  double node_bound;      /* this node's LP relaxation objective */
+  double incumbent;       /* best integer objective so far, INFERNO_INFINITY if none */
+  double best_bound;      /* valid global lower bound at this moment */
+  int outcome;            /* inferno_node_outcome */
+  double elapsed_seconds;
+  int open_nodes;
+} inferno_node_event;
+
+typedef enum {
+  INFERNO_NODE_ROOT = 0,
+  INFERNO_NODE_BRANCHED = 1,
+  INFERNO_NODE_INTEGER_FEASIBLE = 2,
+  INFERNO_NODE_INFEASIBLE = 3,
+  INFERNO_NODE_DOMINATED = 4,
+  INFERNO_NODE_GAP_CUT = 5,
+  INFERNO_NODE_RELAXATION_FAILED = 6
+} inferno_node_outcome;
+
 typedef struct inferno_problem inferno_problem;
 
 /* --- Lifecycle --- */
@@ -67,6 +94,12 @@ inferno_status inferno_problem_set(inferno_problem* p, int num_rows, int num_col
                                     const double* col_lo, const double* col_hi,
                                     const double* row_lo, const double* row_hi);
 
+/* Marks which columns must take integer values, turning the problem into
+ * a MILP. `flags` has `count` entries, which must equal num_cols; a
+ * non-zero entry means that column is integral. Passing NULL clears every
+ * flag, making the problem a pure LP again. */
+inferno_status inferno_problem_set_integer(inferno_problem* p, const int* flags, int count);
+
 /* --- Solving --- */
 /* Solves with the revised simplex. `presolve` non-zero enables the
  * presolve/postsolve pass. The independent checker always runs; its
@@ -74,6 +107,40 @@ inferno_status inferno_problem_set(inferno_problem* p, int num_rows, int num_col
  * cares about correctness should consult it rather than trusting the
  * solve status alone -- that is the whole discipline of this project. */
 inferno_status inferno_solve(inferno_problem* p, int presolve);
+
+/* Solves as a MILP with branch-and-bound. Requires that
+ * inferno_problem_set_integer has marked at least one column; with none
+ * marked this is simply an LP solve routed through the same accounting.
+ *
+ * While this call is running, another thread may safely call
+ * inferno_get_event_count / inferno_get_events on the same problem to
+ * observe the search live -- those two functions are the ONLY ones with
+ * that guarantee, and they take an internal lock to provide it. Every
+ * other function on this handle stays single-threaded.
+ *
+ * The independent MILP checker runs on the result, exactly as the LP
+ * checker does for inferno_solve. */
+inferno_status inferno_solve_mip(inferno_problem* p, double time_limit_seconds, int node_limit,
+                                  double gap_tolerance, int presolve);
+
+/* MILP-specific results. All return INFERNO_STATUS_NOT_SOLVED unless
+ * inferno_solve_mip has been run. */
+inferno_status inferno_get_best_bound(const inferno_problem* p, double* out);
+inferno_status inferno_get_gap(const inferno_problem* p, double* out);
+inferno_status inferno_get_nodes_explored(const inferno_problem* p, int* out);
+inferno_status inferno_get_proved_optimal(const inferno_problem* p, int* out);
+inferno_status inferno_get_solve_seconds(const inferno_problem* p, double* out);
+
+/* Number of node events recorded so far. Safe to call from another thread
+ * during inferno_solve_mip. */
+inferno_status inferno_get_event_count(const inferno_problem* p, int* out);
+/* Copies up to `count` events starting at index `start` into `out`, and
+ * writes how many were actually copied into `written`. Safe to call from
+ * another thread during inferno_solve_mip. */
+inferno_status inferno_get_events(const inferno_problem* p, inferno_node_event* out, int start,
+                                   int count, int* written);
+/* Static name for an inferno_node_outcome. Never NULL. */
+const char* inferno_node_outcome_string(int outcome);
 
 inferno_status inferno_get_solve_status(const inferno_problem* p, inferno_solve_status* out);
 inferno_status inferno_get_objective(const inferno_problem* p, double* out);
