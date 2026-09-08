@@ -396,6 +396,44 @@ class SuccessPath(unittest.TestCase):
         self.assertGreater(second.result["objective"], first.result["objective"],
                            "more demand cannot be cheaper")
 
+    def test_what_if_follow_up_carries_the_model_forward(self):
+        """A what-if is meaningless without the model it refers to. The
+        current model must be sent as context, or the AI re-derives a
+        different problem and the comparison compares nothing."""
+        captured = {}
+
+        # Stateful on purpose: the first call is the original problem, the
+        # second is the +20% revision. A stub that answered 1200 both times
+        # would compare a run against itself and pass for the wrong reason.
+        calls = {"n": 0}
+
+        def t(url, payload, headers, timeout):
+            captured["payload"] = payload
+            calls["n"] += 1
+            m = examples.build("plant_selection")
+            if calls["n"] > 1:
+                for c in m["constraints"]:
+                    if c["name"] == "demand":
+                        c["lower_bound"] = 1200.0
+            return 200, envelope(json.dumps(m))
+
+        a = make_app(client=make_client(t), key="k")
+        first = a.route_formulate({"message": "three plants, demand 1000", "session": "s1"})
+        self.assertTrue(first["ok"])
+        run_a = solve_now(a, first["model"])
+
+        second = a.route_formulate({"message": "what if demand increases by 20%?",
+                                    "session": "s1"})
+        self.assertTrue(second["ok"])
+        sent = json.dumps(captured["payload"])
+        self.assertIn("COMPLETE modified model", sent)
+        self.assertIn("plant_selection", sent)
+
+        run_b = solve_now(a, second["model"])
+        self.assertEqual(run_b.result["status"], "OPTIMAL")
+        self.assertTrue(run_b.result["checker_passed"])
+        self.assertGreater(run_b.result["objective"], run_a.result["objective"])
+
     def test_solver_failure_after_a_successful_ai_call(self):
         """The AI succeeds, the model validates, and the model is genuinely
         infeasible. That must be reported as infeasible -- not as a failure

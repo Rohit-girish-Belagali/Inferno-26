@@ -158,7 +158,8 @@ class App:
             return {"error": "message too long"}, 400
 
         state = self.sessions.get(sid)
-        result, parsed = self.client.formulate(state["history"], message)
+        result, parsed = self.client.formulate(state["history"], message,
+                                               current_model=state.get("model"))
         if not result.ok:
             self.log("AI_FALLBACK", f"formulate failed: {result.code}")
             return {"ok": False, "ai": result.as_dict(),

@@ -281,13 +281,31 @@ class OpenRouterClient:
         return last or LlmResult(False, code=AI_NETWORK_ERROR, message="no attempt was made")
 
     # -- high level ------------------------------------------------------
-    def formulate(self, history, user_message):
+    def formulate(self, history, user_message, current_model=None):
         """Natural language in, a candidate structured model out. The model
         is NOT validated here -- that is model_schema's job, and keeping the
         two separate is what guarantees the validator cannot be skipped by a
-        client that talks to this class directly."""
+        client that talks to this class directly.
+
+        `current_model` is what makes a what-if follow-up work. "What if
+        demand rises 20%?" is meaningless without the model it refers to:
+        with only the conversation summary in context the model would
+        invent a fresh set of costs and the comparison against the previous
+        run would be against a different problem entirely."""
         messages = [{"role": "system", "content": SYSTEM_PROMPT + "\n\n" + MODEL_INSTRUCTION
                      + "\n\n" + CLARIFY_INSTRUCTION}]
+        if current_model:
+            messages.append({
+                "role": "system",
+                "content": "The user already has this model loaded. If their message asks "
+                           "for a change to it (a what-if, a different capacity, an added "
+                           "constraint), return the COMPLETE modified model with every "
+                           "unchanged variable, coefficient and bound carried over exactly "
+                           "as they are here. Change only what was asked for. If they are "
+                           "describing a genuinely new problem instead, ignore this "
+                           "model.\n\n```json\n"
+                           + json.dumps(current_model, default=_json_default)[:40000]
+                           + "\n```"})
         messages.extend(_trim_history(history))
         messages.append({"role": "user", "content": user_message})
 

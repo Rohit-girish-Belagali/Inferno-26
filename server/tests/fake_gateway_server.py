@@ -28,6 +28,11 @@ from http.server import ThreadingHTTPServer  # noqa: E402
 
 
 def build_transport(mode):
+    # The what-if leg of the demo needs the stub to change its answer the
+    # second time it is asked, or "increase demand 20%" returns the
+    # original model and the comparison compares a run against itself.
+    state = {"formulations": 0}
+
     def transport(url, payload, headers, timeout):
         body = json.dumps(payload)
         # Explanation requests carry the solver result; answer those with
@@ -65,7 +70,17 @@ def build_transport(mode):
             bad["variables"][0]["upper_bound"] = 9  # a binary that is not binary
             content = json.dumps(bad)
         else:
-            content = json.dumps(examples.build("plant_selection"))
+            m = examples.build("plant_selection")
+            state["formulations"] += 1
+            last_user = ""
+            for msg in payload.get("messages", []):
+                if msg.get("role") == "user":
+                    last_user = msg.get("content", "")
+            if state["formulations"] > 1 and "20%" in last_user:
+                for c in m["constraints"]:
+                    if c["name"] == "demand":
+                        c["lower_bound"] = round(c["lower_bound"] * 1.2, 6)
+            content = json.dumps(m)
         return 200, json.dumps({"choices": [{"message": {"content": content}}]}).encode()
 
     return transport
