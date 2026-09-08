@@ -96,6 +96,22 @@ foreach ($tool in @("python", "cmake")) {
 }
 
 # ------------------------------------------------------------------ build
+# A build/ directory copied from another machine is worse than no build
+# directory: CMakeCache.txt records the absolute path it was generated in,
+# so CMake stops with an error about the cache belonging elsewhere. Copying
+# the project folder off a Mac or another PC is the normal way to get it
+# here, which makes this the normal first failure. Clear it and move on.
+$cache = Join-Path $PSScriptRoot "build\CMakeCache.txt"
+if (Test-Path $cache) {
+    $recorded = (Select-String -Path $cache -Pattern "^CMAKE_CACHEFILE_DIR:INTERNAL=(.*)$" |
+                 Select-Object -First 1).Matches.Groups[1].Value
+    $expected = (Join-Path $PSScriptRoot "build") -replace "\\", "/"
+    if ($recorded -and ($recorded.TrimEnd('/') -ne $expected.TrimEnd('/'))) {
+        Say "build\ was generated on another machine ($recorded) - removing it" Yellow
+        Remove-Item -Path (Join-Path $PSScriptRoot "build") -Recurse -Force
+    }
+}
+
 Say "Configuring"
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE -ne 0) { Write-Host "CMake configure failed." -ForegroundColor Red; exit 1 }
