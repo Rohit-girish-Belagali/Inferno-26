@@ -5,6 +5,8 @@
 *.log
 *.o
 *.so
+*.pyc
+__pycache__/
 .DS_Store
 .cache/
 bench/netlib/
@@ -13,3 +15,4 @@ build/
 compile_commands.json
 # bench/results.csv is intentionally TRACKED: it is the evidence behind
 # the numbers the README claims, and bench/make_report.py reads only it.
+
