@@ -149,7 +149,13 @@ def load_library(path=None):
         here = os.path.dirname(os.path.abspath(__file__))
         root = os.path.dirname(os.path.dirname(here))
         for name in ("libinferno.dylib", "libinferno.so", "inferno.dll"):
+            # build/ is the single-config layout (Ninja, Makefiles). Visual
+            # Studio is multi-config and puts the artifact in a per-config
+            # subdirectory instead, so look there too rather than making
+            # Windows users pass INFERNO_LIBRARY by hand.
             candidates.append(os.path.join(root, "build", name))
+            candidates.append(os.path.join(root, "build", "Release", name))
+            candidates.append(os.path.join(root, "build", "Debug", name))
             candidates.append(os.path.join(root, name))
         env = os.environ.get("INFERNO_LIBRARY")
         if env:

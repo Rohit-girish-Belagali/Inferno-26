@@ -61,4 +61,4 @@ add_test(NAME copilot_test
          COMMAND python3 ${CMAKE_SOURCE_DIR}/server/tests/test_copilot.py
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(copilot_test PROPERTIES
-                     ENVIRONMENT "INFERNO_LIBRARY=${CMAKE_BINARY_DIR}/libinferno.dylib")
+                     ENVIRONMENT "INFERNO_LIBRARY=$<TARGET_FILE:inferno_shared>")

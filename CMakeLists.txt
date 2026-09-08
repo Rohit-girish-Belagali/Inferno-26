@@ -9,7 +9,11 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-add_compile_options(-Wall -Wextra)
+if(MSVC)
+  add_compile_options(/W3)
+else()
+  add_compile_options(-Wall -Wextra)
+endif()
 
 include_directories(${CMAKE_SOURCE_DIR})
 
@@ -69,7 +73,12 @@ add_library(inferno_shared SHARED
   la/basis_factorization.cpp
 )
 target_include_directories(inferno_shared PUBLIC ${CMAKE_SOURCE_DIR})
-set_target_properties(inferno_shared PROPERTIES OUTPUT_NAME inferno)
+# MSVC exports nothing from a DLL unless told to. Without this the build
+# succeeds and produces inferno.dll with no symbols, and ctypes fails at
+# the first lookup -- the least obvious possible failure.
+set_target_properties(inferno_shared PROPERTIES
+                      OUTPUT_NAME inferno
+                      WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 add_executable(solver src/main.cpp)
 target_link_libraries(solver PRIVATE inferno_core)
